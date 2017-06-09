@@ -43,14 +43,10 @@ type DomainMessage =
     | DownloadError ip ->
       sprintf "Error occured while downloading from %s." ip
  
-/// Contains the version information.
 [<CustomEquality; CustomComparison>]
 type VersionInfo = 
-  { /// MAJOR version when you make incompatible API changes.
-    Major : uint32
-    /// MINOR version when you add functionality in a backwards-compatible manner.
+  { Major : uint32
     Minor : uint32
-    /// PATCH version when you make backwards-compatible bug fixes.
     Patch : uint32
   } 
   override x.ToString() = 
@@ -112,7 +108,7 @@ type VersionInfo =
     | exn ->
         failwithf "Can't parse \"%s\".%s%s" version Environment.NewLine exn.Message
 
-  static member Zero = VersionInfo.Parse "0"
+  static member Zero = VersionInfo.Parse "0.0.0"
   static member SortVersions =
     Array.choose (fun v -> try Some(v,VersionInfo.Parse v) with | _ -> None)
     >> Array.sortBy snd
@@ -120,11 +116,10 @@ type VersionInfo =
     >> Array.rev
 
 
-/// Defines if the range bound is including or excluding.
-[<RequireQualifiedAccess>]
+
+
 type VersionRangeBound = Excluding | Including
 
-/// Represents version information.
 type VersionRange =
   | Minimum of VersionInfo
   | GreaterThan of VersionInfo
@@ -134,21 +129,6 @@ type VersionRange =
   //| OverrideAll of VersionInfo
   | Range of fromB : VersionRangeBound * from : VersionInfo * _to : VersionInfo * _toB : VersionRangeBound
 
-  static member AtLeast version = Minimum(VersionInfo.Parse version)
-  static member AtMost version = Maximum(VersionInfo.Parse version)
-  static member Exactly version = Specific(VersionInfo.Parse version)
-  static member Between(version1,version2) = Range(VersionRangeBound.Including, VersionInfo.Parse version1, VersionInfo.Parse version2,VersionRangeBound.Excluding)
-  static member BasicOperators = ["~>";"==";"<=";">=";"=";">";"<"]
-  static member StrategyOperators = ['!';'@']
-  member this.IsIncludedIn (other : VersionRange) =
-    match other, this with
-    | Minimum v1, Minimum v2 when v1 <= v2 -> true
-    | Minimum v1, Specific v2 when v1 <= v2 -> true
-    | Specific v1, Specific v2 when v1 = v2 -> true
-    | Range(_, min1, max1, _), Specific v2 when min1 <= v2 && max1 >= v2 -> true
-    | GreaterThan v1, GreaterThan v2 when v1 < v2 -> true
-    | GreaterThan v1, Specific v2 when v1 < v2 -> true
-    | _ -> false
   override this.ToString() =
     match this with
     | Specific v -> v.ToString()
@@ -169,6 +149,104 @@ type VersionRange =
         | VersionRangeBound.Including -> "<= " + _to.ToString()
 
       from + " " + _to
+
+module VersionRange =
+  let atLeast = Minimum << VersionInfo.Parse
+  let atMost = Maximum << VersionInfo.Parse
+  let exactly = Specific << VersionInfo.Parse
+  let between (version1, version2) = Range(VersionRangeBound.Including, VersionInfo.Parse version1, VersionInfo.Parse version2,VersionRangeBound.Excluding)
+  // static member BasicOperators = ["~>";"==";"<=";">=";"=";">";"<"]
+  // static member StrategyOperators = ['!';'@']
+  let includes (other : VersionRange) (self : VersionRange) =
+    match self, other with
+    | Minimum v1, Minimum v2 when v1 <= v2 -> true
+    | Minimum v1, Specific v2 when v1 <= v2 -> true
+    | Specific v1, Specific v2 when v1 = v2 -> true
+    | Range(_, min1, max1, _), Specific v2 when min1 <= v2 && max1 >= v2 -> true
+    | GreaterThan v1, GreaterThan v2 when v1 < v2 -> true
+    | GreaterThan v1, Specific v2 when v1 < v2 -> true
+    | _ -> false
+
+type MAptekaRestriction =
+  | Exactly of VersionInfo
+  | AtLeast of VersionInfo
+  | Not     of MAptekaRestriction
+  | Or      of MAptekaRestriction list
+  | And     of MAptekaRestriction list
+
+  override this.ToString() =
+    match this with
+    | MAptekaRestriction.Exactly r -> "== " + r.ToString()
+    | MAptekaRestriction.AtLeast r -> ">= " + r.ToString()
+    | MAptekaRestriction.Not(MAptekaRestriction.AtLeast r) -> sprintf "< " + r.ToString()
+    | MAptekaRestriction.Not(fr) -> sprintf "NOT (%O)" fr
+    | MAptekaRestriction.Or(frl) ->
+      match frl with
+      | [] -> "false"
+      | [single] -> sprintf "%O" single
+      | _ -> sprintf "|| %s" (System.String.Join(" ", frl |> Seq.map (sprintf "(%O)")))
+    | MAptekaRestriction.And(frl) ->
+      match frl with
+      | [] -> "true"
+      | [single] -> sprintf "%O" single
+      | _ -> sprintf "&& %s" (System.String.Join(" ", frl |> Seq.map (sprintf "(%O)")))
+
+module MAptekaRestriction =
+  let rec isMatch (vi : VersionInfo) (mar : MAptekaRestriction) =
+    match mar with
+    | Exactly vi1 -> vi1 = vi
+    | AtLeast vi1 -> Minimum vi1 |> VersionRange.includes (Minimum vi)
+    | Not r       -> r |> isMatch vi |> not
+    | Or rs       -> rs |> List.exists (isMatch vi)
+    | And rs      -> rs |> List.forall (isMatch vi)
+  
+  let noRestriction = AtLeast VersionInfo.Zero
+  let rec isSubsetOf (y : MAptekaRestriction) (x : MAptekaRestriction) =
+    let includes x y = x |> isSubsetOf y
+    match x with
+    | Exactly x' ->
+      match y with
+      | Exactly y' -> x' = y'
+      | AtLeast y' -> y' <= x'
+      | Not (AtLeast y') -> y' > x'
+      | Not (Exactly y') -> x' <> y'
+      | Not y' -> y' |> isMatch x' |> not
+      | Or ys -> ys |> List.exists (includes x)
+      | And ys -> ys |> List.forall (includes x)
+    | AtLeast x' ->
+      match y with
+      | Exactly _ -> false
+      | AtLeast y' -> y' <= x'
+      | Not (AtLeast y') -> false
+      | Not (Exactly y') -> x |> isMatch y' |> not
+      | Not y' -> not (y' |> isMatch x') && not (y' |> isSubsetOf x) 
+      | Or ys -> ys |> List.exists (includes x)
+      | And ys -> ys |> Seq.forall (includes x)
+    
+    | Not (AtLeast x' as notX) ->
+      match y with
+      | Exactly _ | AtLeast _ -> false 
+      | Not (AtLeast y' as notY) -> notY |> isSubsetOf notX
+      | Not (Exactly y' as notY) -> notY |> isSubsetOf notX
+      | Not y' -> y' |> isSubsetOf notX
+      | Or ys -> ys |> List.exists (includes x)
+      | And ys -> ys |> List.forall (includes x)
+    | Not (Exactly x' as notX) ->
+      match y with
+      | Exactly _ | AtLeast _ -> false 
+      | Not (AtLeast y' as notY) -> notY |> isSubsetOf notX
+      | Not (Exactly y' as notY) -> notY |> isSubsetOf notX
+      | Not y' -> y' = Exactly x'
+      | Or ys -> ys |> List.exists (includes x)
+      | And ys -> ys |> List.forall (includes x)
+    
+    | Not (Not x') -> x' |> isSubsetOf y
+    | Not (Or xs) -> (And (xs |> List.map Not)) |> isSubsetOf y
+    | Not (And xs) -> (Or (xs |> List.map Not)) |> isSubsetOf y
+
+    | Or xs -> xs |> List.forall (fun xi -> xi |> isSubsetOf y)
+    | And xs -> xs |> List.exists (fun xi -> xi |> isSubsetOf y)
+
 
 type VersionRequirement =
   | VersionRequirement of VersionRange
@@ -280,8 +358,6 @@ type VersionRequirement =
 
     VersionRequirement(range)
 
-/// Represents a resolver strategy.
-[<RequireQualifiedAccess>]
 type ResolverStrategy = Max | Min
 
 type VersionStrategy =
@@ -307,7 +383,7 @@ type UpdateRequirementSource =
 type UpdateRequirement =
   { Name : UpdateName
     VersionRequirement : VersionRequirement
-    MAptekaRequirement : VersionRequirement
+    MAptekaRestriction : MAptekaRestriction
     ResolverStrategyForDirectDependencies : ResolverStrategy option
     ResolverStrategyForTransitives : ResolverStrategy option
     Parent: UpdateRequirementSource
@@ -397,7 +473,7 @@ type Functional =
       Updates = this.Updates @ other.Updates  
     }
 
-type DependencySet = Set<UpdateName * VersionRequirement * VersionRequirement> // name, upd version, mapteka version
+type DependencySet = Set<UpdateName * VersionRequirement * MAptekaRestriction>
 
 
 

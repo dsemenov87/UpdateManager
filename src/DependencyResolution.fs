@@ -16,6 +16,7 @@ type UpdateDetails =
 type ResolvedUpdate =
   { Name                : UpdateName
     Version             : VersionInfo
+    MAptekaRestriction  : MAptekaRestriction
     Dependencies        : DependencySet
     Unlisted            : bool
   } 
@@ -24,15 +25,13 @@ type ResolvedUpdate =
 type UpdateResolution = Map<UpdateName, ResolvedUpdate>
 
 module DependencySetFilter =
-  let isIncluded (restriction:VersionRequirement) (dependency:UpdateName * VersionRequirement * VersionRequirement) =
+  let isIncluded (restriction:MAptekaRestriction) (dependency:UpdateName * VersionRequirement * MAptekaRestriction) =
     match dependency with
-    | _, _, vr when vr = VersionRequirement.NoRestriction -> true
-    | _, _, (VersionRequirement vr) ->
-      let (VersionRequirement vr1) = restriction
-      vr.IsIncludedIn vr1
+    | _, _, vr when vr = MAptekaRestriction.noRestriction -> true
+    | _, _, mar -> mar |> MAptekaRestriction.isSubsetOf restriction
 
-  let filterByRestrictions (restriction:VersionRequirement) (dependencies:DependencySet) : DependencySet =
-    if restriction = VersionRequirement.NoRestriction then
+  let filterByRestrictions (restriction:MAptekaRestriction) (dependencies:DependencySet) : DependencySet =
+    if restriction = MAptekaRestriction.noRestriction then
       dependencies
     else
       dependencies
@@ -61,7 +60,7 @@ let cleanupNames (model : UpdateResolution) : UpdateResolution =
 
 type ResolverStep =
   { Relax: bool
-    FilteredVersions : Map<UpdateName, (VersionInfo list * bool)>
+    FilteredVersions : Map<UpdateName, VersionInfo list>
     CurrentResolution : Map<UpdateName,ResolvedUpdate>;
     ClosedRequirements : Set<UpdateRequirement>
     OpenRequirements : Set<UpdateRequirement>
@@ -148,7 +147,7 @@ type Resolution with
 
 let calcOpenRequirements (exploredUpdate:ResolvedUpdate,globalMAptekaRestrictions,(versionToExplore,_),dependency,resolverStep:ResolverStep) =
   let dependenciesByName =
-    // there are packages which define multiple dependencies to the same package
+    // there are updates which define multiple dependencies to the same update
     // we compress these here
     let dict = Dictionary<_,_>()
     exploredUpdate.Dependencies
@@ -157,19 +156,11 @@ let calcOpenRequirements (exploredUpdate:ResolvedUpdate,globalMAptekaRestriction
       | true,(_,v2,r2) ->
         match v,v2 with
         | VersionRequirement ra1, VersionRequirement ra2 ->
-          // let newRestrictions =
-          //   match r with
-          //   | Exactly pr ->
-          //     match r2 with
-          //     | Exactly pr2 ->
-          //       MAptekaRestriction.combineRestrictionsWithOr r r2 |> ExplicitRestriction
-          //     | AutoDetectFramework -> ExplicitRestriction r
-          //   | AutoDetectFramework -> r
-
-          if ra1.IsIncludedIn ra2 then
-            dict.[name] <- (name,v, r.MergeWith r2)
-          elif ra2.IsIncludedIn ra1 then
-            dict.[name] <- (name,v2,r.MergeWith r2)
+          let newRestrictions = MAptekaRestriction.Or [r; r2]
+          if ra2 |> VersionRange.includes ra1 then
+            dict.[name] <- (name,v, newRestrictions)
+          elif ra1 |> VersionRange.includes ra2 then
+            dict.[name] <- (name,v2,newRestrictions)
           else dict.[name] <- dep
       | _ -> dict.Add(name,dep))
     dict
@@ -182,10 +173,9 @@ let calcOpenRequirements (exploredUpdate:ResolvedUpdate,globalMAptekaRestriction
 
   dependenciesByName
   |> Set.map (fun (n, v, restriction) ->
-    // let newRestrictions =
-    //   filterRestrictions restriction exploredPackage.Settings.FrameworkRestrictions
-    //   |> filterRestrictions globalFrameworkRestrictions
-    //   |> fun xs -> if xs = ExplicitRestriction FrameworkRestriction.NoRestriction then exploredPackage.Settings.FrameworkRestrictions else xs
+    let newRestrictions =
+      MAptekaRestriction.And [restriction; exploredUpdate.MAptekaRestriction; globalMAptekaRestrictions]
+      |> fun xs -> if xs = MAptekaRestriction.noRestriction then exploredUpdate.MAptekaRestriction else xs
 
     { dependency
       with
@@ -194,17 +184,16 @@ let calcOpenRequirements (exploredUpdate:ResolvedUpdate,globalMAptekaRestriction
         Graph = Set.add dependency dependency.Graph
     })
   |> Set.filter (fun d ->
-      resolverStep.ClosedRequirements
-      |> Set.exists (fun x ->
-          x.Name = d.Name &&
-             //x.Settings.FrameworkRestrictions = d.Settings.FrameworkRestrictions &&
-              (x = d ||
-               x.VersionRequirement.Range.IsIncludedIn d.VersionRequirement.Range))
-      |> not)
+    resolverStep.ClosedRequirements
+    |> Set.exists (fun x ->
+      x.Name = d.Name &&
+        (x = d ||
+         d.VersionRequirement.Range |> VersionRange.includes x.VersionRequirement.Range))
+    |> not)
   |> Set.filter (fun d ->
-      resolverStep.OpenRequirements
-      |> Set.exists (fun x -> x.Name = d.Name && (x = d)) //&& x.Settings.FrameworkRestrictions = d.Settings.FrameworkRestrictions)
-      |> not)
+    resolverStep.OpenRequirements
+    |> Set.exists (fun x -> x.Name = d.Name && (x = d) && x.MAptekaRestriction = d.MAptekaRestriction)
+    |> not)
   |> Set.union rest
 
 let getResolverStrategy
@@ -236,48 +225,136 @@ type UpdateMode =
 type private UpdateConfig =
   { Dependency         : UpdateRequirement
     FunctionalName     : FunctionalName
-    GlobalRestrictions : VersionRequirement
-    RootSettings       : IDictionary<UpdateName,VersionRequirement>
+    MAptekaRestriction : MAptekaRestriction
+    RootSettings       : IDictionary<UpdateName,MAptekaRestriction>
     Version            : VersionInfo
     UpdateMode         : UpdateMode
   } 
-  member self.HasGlobalRestrictions =
-    self.GlobalRestrictions <> VersionRequirement.NoRestriction
+  member self.HasMAptekaRestriction =
+    self.MAptekaRestriction <> MAptekaRestriction.noRestriction
 
   member self.HasDependencyRestrictions =
-      self.Dependency.MAptekaRequirement <> VersionRequirement.NoRestriction
+    self.Dependency.MAptekaRestriction <> MAptekaRestriction.noRestriction
 
-let private updateRestrictions (pkgConfig:PackageConfig) (package:ResolvedPackage) =
-    let newRestrictions =
-        if  not pkgConfig.HasGlobalRestrictions
-            && (FrameworkRestriction.NoRestriction = (package.Settings.FrameworkRestrictions |> getExplicitRestriction)
-            ||  not pkgConfig.HasDependencyRestrictions )
-        then
-            FrameworkRestriction.NoRestriction
-        else
-            // Setting in the dependencies file
-            let globalPackageSettings =
-                match pkgConfig.RootSettings.TryGetValue package.Name with
-                | true, s -> 
-                    match s.FrameworkRestrictions with
-                    | ExplicitRestriction r -> r
-                    | _ -> FrameworkRestriction.NoRestriction
-                | _ -> FrameworkRestriction.NoRestriction
-            // Settings required for the current resolution
-            let packageSettings = package.Settings.FrameworkRestrictions |> getExplicitRestriction
-            // Settings required for this current dependency
-            let dependencySettings = pkgConfig.Dependency.Settings.FrameworkRestrictions |> getExplicitRestriction
-            // Settings defined globally
-            let globalSettings = pkgConfig.GlobalRestrictions |> getExplicitRestriction
-            let isRequired =
-                FrameworkRestriction.Or
-                  [ packageSettings
-                    FrameworkRestriction.And [dependencySettings;globalSettings]]
+let private updateRestrictions (updCongig:UpdateConfig) (update:ResolvedUpdate) =
+  let newRestrictions =
+    if  not updCongig.HasMAptekaRestriction
+      && (MAptekaRestriction.noRestriction = update.MAptekaRestriction
+      ||  not updCongig.HasDependencyRestrictions )
+    then
+      MAptekaRestriction.noRestriction
+    else
+      // Restriction in the protocol file
+      let globalUpdateRestriction =
+        match updCongig.RootSettings.TryGetValue update.Name with
+        | true, s -> s
+        | _ -> MAptekaRestriction.noRestriction
+      
+      let updateRestriction = update.MAptekaRestriction
+      let dependencyRestriction = updCongig.Dependency.MAptekaRestriction
+      let globalSettings = updCongig.MAptekaRestriction
+      let isRequired =
+        MAptekaRestriction.Or
+          [ updateRestriction
+            MAptekaRestriction.And [dependencyRestriction;globalSettings]]
 
-            // We assume the user knows what he is doing
-            FrameworkRestriction.And [ globalPackageSettings;isRequired ]
+      // We assume the user knows what he is doing
+      MAptekaRestriction.And [ globalSettings;isRequired ]
 
 
-    { package with
-        Settings = { package.Settings with FrameworkRestrictions = ExplicitRestriction newRestrictions }
-    }
+  { update with
+      MAptekaRestriction = newRestrictions
+  }
+
+let private exploreUpdateConfig
+  getPackageDetailsBlock
+  (updConfig:UpdateConfig) =
+  
+  let dependency, version = updConfig.Dependency, updConfig.Version
+  match updConfig.UpdateMode with
+  | Install -> printf  " - %O %A" dependency.Name version
+  | _ ->
+    match dependency.VersionRequirement.Range with
+    | Specific _ when dependency.Parent.IsRootRequirement() -> printf " - %O is pinned to %O" dependency.Name version
+    | _ -> printf  " - %O %A" dependency.Name version
+
+  let newRestrictions =
+    MAptekaRestriction.And [dependency.MAptekaRestriction; updConfig.MAptekaRestriction]
+  try
+    let updateDetails : UpdateDetails =
+      getPackageDetailsBlock updConfig.FunctionalName dependency.Name version
+    let filteredDependencies =
+      DependencySetFilter.filterByRestrictions newRestrictions updateDetails.DirectDependencies
+    Some
+      {   Name                = updateDetails.Name
+          Version             = version
+          Dependencies        = filteredDependencies
+          Unlisted            = updateDetails.Unlisted
+          MAptekaRestriction  = newRestrictions
+      }
+  with exn ->
+    printf "    Package not available.%s      Message: %s" Environment.NewLine exn.Message
+    None
+   
+type StackPack =
+  { ExploredUpdates     : Dictionary<UpdateName*VersionInfo,ResolvedUpdate>
+    KnownConflicts       : HashSet<HashSet<UpdateRequirement> * (VersionInfo list * bool) option>
+    ConflictHistory      : Dictionary<UpdateName, int>
+  }
+
+let private getExploredUpdate (updConfig:UpdateConfig) getUpdateDetailsBlock (stackpack:StackPack) =
+  let key = (updConfig.Dependency.Name, updConfig.Version)
+
+  match stackpack.ExploredUpdates.TryGetValue key with
+  | true, update ->
+    let package = updateRestrictions updConfig update
+    stackpack.ExploredUpdates.[key] <- update
+    printf "   Retrieved Explored Package  %O" update
+    stackpack, Some(true, update)
+  | false,_ ->
+    match exploreUpdateConfig getUpdateDetailsBlock updConfig with
+    | Some explored ->
+      printf "   Found Explored Package  %O" explored
+      stackpack.ExploredUpdates.Add(key,explored)
+      stackpack, Some(false, explored)
+    | None ->
+      stackpack, None
+
+let private getCompatibleVersions
+  (currentStep:ResolverStep)
+  functionalName
+  (currentRequirement:UpdateRequirement)
+  (getVersionsF: ResolverStrategy -> FunctionalName -> UpdateName -> VersionInfo seq)
+  globalOverride
+  globalStrategyForDirectDependencies
+  globalStrategyForTransitives =
+    
+  printfn "  Trying to resolve %O" currentRequirement
+
+  match Map.tryFind currentRequirement.Name currentStep.FilteredVersions with
+  | None ->
+    let allRequirementsOfCurrentPackage =
+      currentStep.OpenRequirements
+      |> Set.filter (fun r -> currentRequirement.Name = r.Name)
+
+    // we didn't select a version yet so all versions are possible
+    let isInRange mapF ver =
+      allRequirementsOfCurrentPackage
+      |> Set.forall (fun r -> (mapF r).VersionRequirement.IsInRange ver)
+
+    let getSingleVersion v = Seq.singleton v
+      
+    let availableVersions =
+      match currentRequirement.VersionRequirement.Range with
+      //| OverrideAll v -> getSingleVersion v
+      | Specific v -> getSingleVersion v
+      | _ ->
+        let resolverStrategy = getResolverStrategy globalStrategyForDirectDependencies globalStrategyForTransitives allRequirementsOfCurrentPackage currentRequirement
+        getVersionsF resolverStrategy functionalName currentRequirement.Name
+
+    Seq.filter (isInRange id) (availableVersions) |> Seq.cache
+
+  | Some versions ->
+    // we already selected a version so we can't pick a different
+    versions |> Seq.filter (currentRequirement.VersionRequirement.IsInRange)
+
