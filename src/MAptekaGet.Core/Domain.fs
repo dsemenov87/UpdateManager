@@ -2,7 +2,7 @@ module MAptekaGet.Domain
 
 open System
 open System.Text.RegularExpressions
-open Utils
+open MAptekaGet.Utils
 
 type UpdateName =
   | UpdateName of name:string * compareString:string
@@ -71,8 +71,8 @@ type VersionInfo =
 
       | _ -> invalidArg "yobj" "cannot compare values of different types"
 
-
-  static member Parse (version : string) = 
+module VersionInfo =
+  let parse (version : string) = 
     try
       /// sanity check to make sure that all of the integers in the string are positive.
       /// because we use raw substrings with dashes this is very complex :(
@@ -108,15 +108,12 @@ type VersionInfo =
     | exn ->
         failwithf "Can't parse \"%s\".%s%s" version Environment.NewLine exn.Message
 
-  static member Zero = VersionInfo.Parse "0.0.0"
-  static member SortVersions =
-    Array.choose (fun v -> try Some(v,VersionInfo.Parse v) with | _ -> None)
+  let zero = parse "0.0.0"
+  let sortVersions =
+    Array.choose (fun v -> try Some(v,parse v) with | _ -> None)
     >> Array.sortBy snd
     >> Array.map fst
     >> Array.rev
-
-
-
 
 type VersionRangeBound = Excluding | Including
 
@@ -151,10 +148,10 @@ type VersionRange =
       from + " " + _to
 
 module VersionRange =
-  let atLeast = Minimum << VersionInfo.Parse
-  let atMost = Maximum << VersionInfo.Parse
-  let exactly = Specific << VersionInfo.Parse
-  let between (version1, version2) = Range(VersionRangeBound.Including, VersionInfo.Parse version1, VersionInfo.Parse version2,VersionRangeBound.Excluding)
+  let atLeast = Minimum << VersionInfo.parse
+  let atMost = Maximum << VersionInfo.parse
+  let exactly = Specific << VersionInfo.parse
+  let between (version1, version2) = Range(VersionRangeBound.Including, VersionInfo.parse version1, VersionInfo.parse version2,VersionRangeBound.Excluding)
   // static member BasicOperators = ["~>";"==";"<=";">=";"=";">";"<"]
   // static member StrategyOperators = ['!';'@']
   let includes (other : VersionRange) (self : VersionRange) =
@@ -200,7 +197,7 @@ module MAptekaRestriction =
     | Or rs       -> rs |> List.exists (isMatch vi)
     | And rs      -> rs |> List.forall (isMatch vi)
   
-  let noRestriction = AtLeast VersionInfo.Zero
+  let noRestriction = AtLeast VersionInfo.zero
   let rec isSubsetOf (y : MAptekaRestriction) (x : MAptekaRestriction) =
     let includes x y = x |> isSubsetOf y
     match x with
@@ -247,13 +244,15 @@ module MAptekaRestriction =
     | Or xs -> xs |> List.forall (fun xi -> xi |> isSubsetOf y)
     | And xs -> xs |> List.exists (fun xi -> xi |> isSubsetOf y)
 
-
 type VersionRequirement =
   | VersionRequirement of VersionRange
-  
+
+  override this.ToString() =
+    let (VersionRequirement range) = this in range.ToString()
+
+module VersionRequirement =
   /// Checks wether the given version is in the version range
-  member this.IsInRange(version : VersionInfo) =
-    let (VersionRequirement (range)) = this
+  let isInRange (version : VersionInfo) (VersionRequirement range) =
     let sameVersion v=
       v.Major = version.Major && v.Minor = version.Minor && v.Patch = version.Patch
 
@@ -277,31 +276,25 @@ type VersionRequirement =
 
       (isInLowerBound && isInUpperBound) || sameVersion from
 
-  member this.Range =
-    match this with
-    | VersionRequirement(range) -> range
+  let range (VersionRequirement range) = range
 
-  static member NoRestriction = VersionRequirement(Minimum(VersionInfo.Zero))
-  override this.ToString() = this.Range.ToString()
+  let noRestriction = VersionRequirement(Minimum(VersionInfo.zero))
 
-  member this.IntersectWith (other : VersionRequirement) : VersionRequirement =
-    //todo
-    failwith "Not implemented"
-  static member Parse text =
-    if String.IsNullOrWhiteSpace text || text = "null" then VersionRequirement.NoRestriction else
+  let parse text =
+    if String.IsNullOrWhiteSpace text || text = "null" then noRestriction else
 
     let analyzeVersion operator (text:string) =
       try
         if text.Contains "*" then
-          VersionRange.Minimum (VersionInfo.Parse (text.Replace("*","0")))
+          VersionRange.Minimum (VersionInfo.parse (text.Replace("*","0")))
         else
-          operator (VersionInfo.Parse text)
+          operator (VersionInfo.parse text)
       with
       | exn -> failwithf "Error while parsing %s%sMessage: %s" text Environment.NewLine exn.Message
 
     let analyzeVersionSimple (text:string) =
       try
-        VersionInfo.Parse (text.Replace("*","0"))
+        VersionInfo.parse (text.Replace("*","0"))
       with
       | exn -> failwithf "Error while parsing %s%sMessage: %s" text Environment.NewLine exn.Message
 
@@ -345,7 +338,7 @@ type VersionRequirement =
                 | VersionRangeBound.Including, VersionRangeBound.Including -> Minimum(versions.[0])
                 | VersionRangeBound.Including, VersionRangeBound.Excluding -> Minimum(versions.[0])
                 | _ -> failwithf "unable to parse %s" text
-            | 0 -> Minimum(VersionInfo.Zero)
+            | 0 -> Minimum(VersionInfo.zero)
             | _ -> failwithf "unable to parse %s" text
         match parsed with
         | Range(fromB, from, _to, _toB) -> 

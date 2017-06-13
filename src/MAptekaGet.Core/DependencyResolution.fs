@@ -41,7 +41,7 @@ module DependencySetFilter =
     dependencies
     // exists any not matching stuff
     |> Seq.exists (fun (name, requirement, restriction) ->
-      if name = update.Name && not (requirement.IsInRange update.Version) then
+      if name = update.Name && not (requirement |> VersionRequirement.isInRange update.Version) then
         printf "   Incompatible dependency: %O %O conflicts with resolved version %O" name requirement update.Version
         true
       else false
@@ -183,16 +183,16 @@ let calcOpenRequirements (exploredUpdate:ResolvedUpdate,globalMAptekaRestriction
         VersionRequirement = v
         Graph = Set.add dependency dependency.Graph
     })
-  |> Set.filter (fun d ->
+  |> Set.filter (fun ({VersionRequirement = (VersionRequirement range)} as d) ->
     resolverStep.ClosedRequirements
-    |> Set.exists (fun x ->
+    |> Set.exists (fun ({VersionRequirement = (VersionRequirement xrange)} as x) ->
       x.Name = d.Name &&
         (x = d ||
-         d.VersionRequirement.Range |> VersionRange.includes x.VersionRequirement.Range))
+         range |> VersionRange.includes xrange))
     |> not)
   |> Set.filter (fun d ->
     resolverStep.OpenRequirements
-    |> Set.exists (fun x -> x.Name = d.Name && (x = d) && x.MAptekaRestriction = d.MAptekaRestriction)
+    |> Set.exists (fun x -> x.Name = d.Name && x = d && x.MAptekaRestriction = d.MAptekaRestriction)
     |> not)
   |> Set.union rest
 
@@ -274,8 +274,9 @@ let private exploreUpdateConfig
   match updConfig.UpdateMode with
   | Install -> printf  " - %O %A" dependency.Name version
   | _ ->
-    match dependency.VersionRequirement.Range with
-    | Specific _ when dependency.Parent.IsRootRequirement() -> printf " - %O is pinned to %O" dependency.Name version
+    match dependency.VersionRequirement with
+    | VersionRequirement (Specific _) when dependency.Parent.IsRootRequirement() ->
+      printf " - %O is pinned to %O" dependency.Name version
     | _ -> printf  " - %O %A" dependency.Name version
 
   let newRestrictions =
@@ -298,8 +299,8 @@ let private exploreUpdateConfig
    
 type StackPack =
   { ExploredUpdates     : Dictionary<UpdateName*VersionInfo,ResolvedUpdate>
-    KnownConflicts       : HashSet<HashSet<UpdateRequirement> * (VersionInfo list * bool) option>
-    ConflictHistory      : Dictionary<UpdateName, int>
+    KnownConflicts      : HashSet<HashSet<UpdateRequirement> * (VersionInfo list * bool) option>
+    ConflictHistory     : Dictionary<UpdateName, int>
   }
 
 let private getExploredUpdate (updConfig:UpdateConfig) getUpdateDetailsBlock (stackpack:StackPack) =
@@ -340,14 +341,14 @@ let private getCompatibleVersions
     // we didn't select a version yet so all versions are possible
     let isInRange mapF ver =
       allRequirementsOfCurrentPackage
-      |> Set.forall (fun r -> (mapF r).VersionRequirement.IsInRange ver)
+      |> Set.forall (fun r -> (mapF r).VersionRequirement |> VersionRequirement.isInRange ver)
 
     let getSingleVersion v = Seq.singleton v
       
     let availableVersions =
-      match currentRequirement.VersionRequirement.Range with
+      match currentRequirement.VersionRequirement with
       //| OverrideAll v -> getSingleVersion v
-      | Specific v -> getSingleVersion v
+      | VersionRequirement (Specific v) -> getSingleVersion v
       | _ ->
         let resolverStrategy = getResolverStrategy globalStrategyForDirectDependencies globalStrategyForTransitives allRequirementsOfCurrentPackage currentRequirement
         getVersionsF resolverStrategy functionalName currentRequirement.Name
@@ -356,5 +357,99 @@ let private getCompatibleVersions
 
   | Some versions ->
     // we already selected a version so we can't pick a different
-    versions |> Seq.filter (currentRequirement.VersionRequirement.IsInRange)
+    versions |> Seq.filter (fun vi -> VersionRequirement.isInRange vi currentRequirement.VersionRequirement)
 
+let private getConflicts
+  (currentStep:ResolverStep)
+  (currentRequirement:UpdateRequirement)
+  (knownConflicts:HashSet<HashSet<UpdateRequirement> * (VersionInfo list * bool) option>) =
+    
+  let allRequirements =
+    currentStep.OpenRequirements
+    |> Set.filter (fun r -> r.Graph |> Set.contains currentRequirement |> not)
+    |> Set.union currentStep.ClosedRequirements
+
+  knownConflicts
+  |> Seq.map (fun (conflicts,selectedVersion) ->
+    let isSubset = conflicts.IsSubsetOf allRequirements
+    match selectedVersion with
+    | None when isSubset -> conflicts
+    | Some(selectedVersion,_) ->
+      let n = (Seq.head conflicts).Name
+      match currentStep.FilteredVersions |> Map.tryFind n with
+      | Some v when v = selectedVersion && isSubset -> conflicts
+      | _ -> HashSet()
+    | _ -> HashSet())
+  |> Seq.collect id
+  |> HashSet
+
+let private getCurrentRequirement
+  updateFilter 
+  (openRequirements:Set<UpdateRequirement>)
+  (conflictHistory:Dictionary<_,_>) =
+
+  let initialMin = Seq.head openRequirements
+  let initialBoost = 0
+
+  let currentMin, _ =
+    ((initialMin,initialBoost),openRequirements)
+    ||> Seq.fold (fun (cmin,cboost) d ->
+      let boost =
+        match conflictHistory.TryGetValue d.Name with
+        | true,c -> -c
+        | _ -> 0
+      if UpdateRequirement.Compare(d,cmin,updateFilter,boost,cboost) = -1 then
+        d, boost
+      else
+        cmin,cboost)
+  currentMin
+
+type ConflictState =
+  { Status               : Resolution
+    LastConflictReported : DateTime
+    TryRelaxed           : bool
+    Conflicts            : Set<UpdateRequirement>
+    VersionsToExplore    : VersionInfo seq
+    //GlobalOverride       : bool
+  }
+
+let private boostConflicts
+  (filteredVersions:Map<UpdateName, (VersionInfo list * bool)>)
+  (currentRequirement:UpdateRequirement)
+  (stackpack:StackPack)
+  (conflictState:ConflictState) =
+
+  let conflictStatus = conflictState.Status
+  let isNewConflict  =
+    match stackpack.ConflictHistory.TryGetValue currentRequirement.Name with
+    | true,count ->
+      stackpack.ConflictHistory.[currentRequirement.Name] <- count + 1
+      false
+    | _ ->
+      stackpack.ConflictHistory.Add(currentRequirement.Name, 1)
+      true
+
+  let conflicts = conflictStatus.GetConflicts()
+  let lastConflictReported =
+    match conflicts with
+    | _ when not conflicts.IsEmpty  ->
+      let c = conflicts |> Seq.minBy (fun c -> c.Parent)
+      let selectedVersion = Map.tryFind c.Name filteredVersions
+      let key = conflicts |> HashSet,selectedVersion
+      stackpack.KnownConflicts.Add key |> ignore
+
+      let reportThatResolverIsTakingLongerThanExpected =
+        not isNewConflict && DateTime.Now - conflictState.LastConflictReported > TimeSpan.FromSeconds 10.
+
+      printfn "%s" <| conflictStatus.GetErrorText(false)
+      printfn "    ==> Trying different resolution."
+      if reportThatResolverIsTakingLongerThanExpected then
+        printfn "%s" <| conflictStatus.GetErrorText(false)
+        printfn "The process is taking longer than expected."
+        printfn "Paket may still find a valid resolution, but this might take a while."
+        DateTime.Now
+      else
+        conflictState.LastConflictReported
+    | _ -> conflictState.LastConflictReported
+  { conflictState with
+      LastConflictReported = lastConflictReported }, stackpack
