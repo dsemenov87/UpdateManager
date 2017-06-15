@@ -156,7 +156,7 @@ let calcOpenRequirements (exploredUpdate:ResolvedUpdate,globalMAptekaRestriction
       | true,(_,v2,r2) ->
         match v,v2 with
         | VersionRequirement ra1, VersionRequirement ra2 ->
-          let newRestrictions = MAptekaRestriction.Or [r; r2]
+          let newRestrictions = r .|| r2
           if ra2 |> VersionRange.includes ra1 then
             dict.[name] <- (name,v, newRestrictions)
           elif ra1 |> VersionRange.includes ra2 then
@@ -174,7 +174,7 @@ let calcOpenRequirements (exploredUpdate:ResolvedUpdate,globalMAptekaRestriction
   dependenciesByName
   |> Set.map (fun (n, v, restriction) ->
     let newRestrictions =
-      MAptekaRestriction.And [restriction; exploredUpdate.MAptekaRestriction; globalMAptekaRestrictions]
+      (restriction .&& exploredUpdate.MAptekaRestriction .&& globalMAptekaRestrictions)
       |> fun xs -> if xs = MAptekaRestriction.noRestriction then exploredUpdate.MAptekaRestriction else xs
 
     { dependency
@@ -253,14 +253,9 @@ let private updateRestrictions (updCongig:UpdateConfig) (update:ResolvedUpdate) 
       let updateRestriction = update.MAptekaRestriction
       let dependencyRestriction = updCongig.Dependency.MAptekaRestriction
       let globalSettings = updCongig.MAptekaRestriction
-      let isRequired =
-        MAptekaRestriction.Or
-          [ updateRestriction
-            MAptekaRestriction.And [dependencyRestriction;globalSettings]]
 
       // We assume the user knows what he is doing
-      MAptekaRestriction.And [ globalSettings;isRequired ]
-
+      globalSettings .|| ( updateRestriction .&& dependencyRestriction .&& globalSettings )
 
   { update with
       MAptekaRestriction = newRestrictions
@@ -280,7 +275,7 @@ let private exploreUpdateConfig
     | _ -> printf  " - %O %A" dependency.Name version
 
   let newRestrictions =
-    MAptekaRestriction.And [dependency.MAptekaRestriction; updConfig.MAptekaRestriction]
+    dependency.MAptekaRestriction .&& updConfig.MAptekaRestriction
   try
     let updateDetails : UpdateDetails =
       getPackageDetailsBlock updConfig.FunctionalName dependency.Name version

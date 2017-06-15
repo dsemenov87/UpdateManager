@@ -1,0 +1,202 @@
+{
+  "runtimeTarget": {
+    "name": ".NETCoreApp,Version=v1.1",
+    "signature": "b6c35d4240a7fca930a06622174dbc0b0f760407"
+  },
+  "compilationOptions": {},
+  "targets": {
+    ".NETCoreApp,Version=v1.1": {
+      "maptekaget.unittest/1.0.0": {
+        "dependencies": {
+          "FSharp.Core": "4.1.17",
+          "FSharp.NET.Sdk": "1.0.5",
+          "MAptekaGet": "1.0.0",
+          "NHamcrest.XUnit": "2.0.1",
+          "xunit": "2.3.0-beta2-build3683"
+        },
+        "runtime": {
+          "MAptekaGet.UnitTest.dll": {}
+        }
+      },
+      "fsharp.compiler.tools/4.1.17": {},
+      "fsharp.core/4.1.17": {
+        "runtime": {
+          "lib/netstandard1.6/FSharp.Core.dll": {}
+        },
+        "runtimeTargets": {
+          "runtimes/any/native/FSharp.Core.optdata": {
+            "rid": "any",
+            "assetType": "native"
+          },
+          "runtimes/any/native/FSharp.Core.sigdata": {
+            "rid": "any",
+            "assetType": "native"
+          }
+        }
+      },
+      "fsharp.net.sdk/1.0.5": {
+        "dependencies": {
+          "FSharp.Compiler.Tools": "4.1.17"
+        }
+      },
+      "nhamcrest/2.0.1": {
+        "runtime": {
+          "lib/netstandard1.5/NHamcrest.dll": {}
+        }
+      },
+      "nhamcrest.xunit/2.0.1": {
+        "dependencies": {
+          "NHamcrest": "2.0.1",
+          "xunit.assert": "2.3.0-beta2-build3683"
+        },
+        "runtime": {
+          "lib/netstandard1.5/NHamcrest.XUnit.dll": {}
+        }
+      },
+      "xunit/2.3.0-beta2-build3683": {
+        "dependencies": {
+          "xunit.analyzers": "0.1.0",
+          "xunit.assert": "2.3.0-beta2-build3683",
+          "xunit.core": "2.3.0-beta2-build3683"
+        }
+      },
+      "xunit.abstractions/2.0.1": {
+        "runtime": {
+          "lib/netstandard1.0/xunit.abstractions.dll": {}
+        }
+      },
+      "xunit.analyzers/0.1.0": {},
+      "xunit.assert/2.3.0-beta2-build3683": {
+        "runtime": {
+          "lib/netstandard1.1/xunit.assert.dll": {}
+        }
+      },
+      "xunit.core/2.3.0-beta2-build3683": {
+        "dependencies": {
+          "xunit.extensibility.core": "2.3.0-beta2-build3683",
+          "xunit.extensibility.execution": "2.3.0-beta2-build3683"
+        }
+      },
+      "xunit.extensibility.core/2.3.0-beta2-build3683": {
+        "dependencies": {
+          "xunit.abstractions": "2.0.1"
+        },
+        "runtime": {
+          "lib/netstandard1.1/xunit.core.dll": {}
+        }
+      },
+      "xunit.extensibility.execution/2.3.0-beta2-build3683": {
+        "dependencies": {
+          "xunit.extensibility.core": "2.3.0-beta2-build3683"
+        },
+        "runtime": {
+          "lib/netstandard1.1/xunit.execution.dotnet.dll": {}
+        }
+      },
+      "maptekaget/1.0.0": {
+        "dependencies": {
+          "FSharp.Core": "4.1.17"
+        },
+        "runtime": {
+          "MAptekaGet.dll": {}
+        }
+      }
+    }
+  },
+  "libraries": {
+    "maptekaget.unittest/1.0.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    },
+    "fsharp.compiler.tools/4.1.17": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-8yO223iFHjM8uFEg5w8mwIctn5YFXWCnJYol3P/KYJibPDLoysIUNdHSZBmpjY8nm2L5jBM7Isns918XYUi36w==",
+      "path": "fsharp.compiler.tools/4.1.17",
+      "hashPath": "fsharp.compiler.tools.4.1.17.nupkg.sha512"
+    },
+    "fsharp.core/4.1.17": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-kK9ZxpIiN/psnlBrIi9g+NP9We/pq08ePDiCPszhbMksK+DIjrX45U9BUtCEjWbjox5IZeR1hajaCBdVrOYgag==",
+      "path": "fsharp.core/4.1.17",
+      "hashPath": "fsharp.core.4.1.17.nupkg.sha512"
+    },
+    "fsharp.net.sdk/1.0.5": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-6qJGV06m6Av5VTJxYKI2PnC75pJi3dWyqNEuM2068Wo94O08jHAhTy8hSiE3PKZ2YsKcDyomo3RBnveLxwQqwQ==",
+      "path": "fsharp.net.sdk/1.0.5",
+      "hashPath": "fsharp.net.sdk.1.0.5.nupkg.sha512"
+    },
+    "nhamcrest/2.0.1": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-vxZsN8LTByWuCldM02ovkxZ1bCRjm0jyUzXsprbpehvPf2/QdZ7GPIKclXp3+tyuCv9XLDmp2S0naiQILIPeHA==",
+      "path": "nhamcrest/2.0.1",
+      "hashPath": "nhamcrest.2.0.1.nupkg.sha512"
+    },
+    "nhamcrest.xunit/2.0.1": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-C4G4lch2U4BoEEF5tIn2V55GAEmyMpCwoH1vK4jwe3CMYi7WYfN5M+eDHL5Rk7DMpnFMC7jIWcdpcieni2yRmQ==",
+      "path": "nhamcrest.xunit/2.0.1",
+      "hashPath": "nhamcrest.xunit.2.0.1.nupkg.sha512"
+    },
+    "xunit/2.3.0-beta2-build3683": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-77qFlipJmj8ULgXy3NS6nL7cq+qzmrbUF0+I4qW+fACp4Tdy2WUZdM1SJtbKN0Ghx89Ib00mZl9owfG4nQs+UQ==",
+      "path": "xunit/2.3.0-beta2-build3683",
+      "hashPath": "xunit.2.3.0-beta2-build3683.nupkg.sha512"
+    },
+    "xunit.abstractions/2.0.1": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-bDm/zdG5rnRDsobKuKwrvL4HccBdC0uvT12be6fG12P3d1U7u9Wkvfoq/PM2GeyIeb0Dtcmm/7k2oaawiqQ2Dg==",
+      "path": "xunit.abstractions/2.0.1",
+      "hashPath": "xunit.abstractions.2.0.1.nupkg.sha512"
+    },
+    "xunit.analyzers/0.1.0": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-wPHthUmM0vdhL3lrTlyxJFfTgGh+2bkOn5CuxgZaPEMxLJArMCvUx8WmsVFeIATLVulVGvwNnZFkuwc0lsun7g==",
+      "path": "xunit.analyzers/0.1.0",
+      "hashPath": "xunit.analyzers.0.1.0.nupkg.sha512"
+    },
+    "xunit.assert/2.3.0-beta2-build3683": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-BxUwqzInm6UuYTh4lSlox9rBB5zrX+XDbOh3f4/t4/xfFUuFBP4bgIPQ6lA+IMS35Qey3SB63/YyPNojprB4oQ==",
+      "path": "xunit.assert/2.3.0-beta2-build3683",
+      "hashPath": "xunit.assert.2.3.0-beta2-build3683.nupkg.sha512"
+    },
+    "xunit.core/2.3.0-beta2-build3683": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-bI3xtMC2ooGiVoRxtq2Hfhc+TKCW95Lbsrb3iHryLUt+ErjQbpPQ3n02rMCu/VT3FfBCs9tLEgtTIZuJufRMtA==",
+      "path": "xunit.core/2.3.0-beta2-build3683",
+      "hashPath": "xunit.core.2.3.0-beta2-build3683.nupkg.sha512"
+    },
+    "xunit.extensibility.core/2.3.0-beta2-build3683": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-gAZ26vvT0JwBIUJlnWGgHWV0a35DATAVqhWVsgfWtu/UOYZ/316XoIRMOuOn9BLaoevU0mLEPMGe+9ui/aCaxw==",
+      "path": "xunit.extensibility.core/2.3.0-beta2-build3683",
+      "hashPath": "xunit.extensibility.core.2.3.0-beta2-build3683.nupkg.sha512"
+    },
+    "xunit.extensibility.execution/2.3.0-beta2-build3683": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-08dwDqRGi6dmvhimUzrz/PvizuAvnHng7pZXrKMWuYx+3S4re2VIpz38ylJrvsjf8S5b+Py4fLZUjZZpVckbhQ==",
+      "path": "xunit.extensibility.execution/2.3.0-beta2-build3683",
+      "hashPath": "xunit.extensibility.execution.2.3.0-beta2-build3683.nupkg.sha512"
+    },
+    "maptekaget/1.0.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    }
+  }
+}

@@ -1,7 +1,6 @@
 D:\Repo\MApteka-Get\MAptekaGet\src\MAptekaGet.Core\bin\Debug\netcoreapp1.1\MAptekaGet.deps.json
 D:\Repo\MApteka-Get\MAptekaGet\src\MAptekaGet.Core\bin\Debug\netcoreapp1.1\MAptekaGet.runtimeconfig.json
 D:\Repo\MApteka-Get\MAptekaGet\src\MAptekaGet.Core\bin\Debug\netcoreapp1.1\MAptekaGet.runtimeconfig.dev.json
-D:\Repo\MApteka-Get\MAptekaGet\src\MAptekaGet.Core\bin\Debug\netcoreapp1.1\MAptekaGet.dll
 D:\Repo\MApteka-Get\MAptekaGet\src\MAptekaGet.Core\bin\Debug\netcoreapp1.1\MAptekaGet.pdb
 D:\Repo\MApteka-Get\MAptekaGet\src\MAptekaGet.Core\obj\Debug\netcoreapp1.1\MAptekaGet.dll
 D:\Repo\MApteka-Get\MAptekaGet\src\MAptekaGet.Core\obj\Debug\netcoreapp1.1\MAptekaGet.pdb

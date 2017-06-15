@@ -67,13 +67,6 @@
           "buildCrossTargeting/FSharp.NET.Sdk.targets": {}
         }
       },
-      "FsUnit.xUnit/1.4.1": {
-        "type": "package",
-        "dependencies": {
-          "FSharp.Core": "3.1.2.5",
-          "xunit": "[2.1.0]"
-        }
-      },
       "Libuv/1.9.1": {
         "type": "package",
         "dependencies": {
@@ -460,6 +453,32 @@
           "System.Threading.Timer": "4.3.0",
           "System.Xml.ReaderWriter": "4.3.0",
           "System.Xml.XDocument": "4.3.0"
+        }
+      },
+      "NHamcrest/2.0.1": {
+        "type": "package",
+        "dependencies": {
+          "NETStandard.Library": "1.6.1"
+        },
+        "compile": {
+          "lib/netstandard1.5/NHamcrest.dll": {}
+        },
+        "runtime": {
+          "lib/netstandard1.5/NHamcrest.dll": {}
+        }
+      },
+      "NHamcrest.XUnit/2.0.1": {
+        "type": "package",
+        "dependencies": {
+          "NETStandard.Library": "1.6.1",
+          "NHamcrest": "2.0.1",
+          "xunit.assert": "[2.2.0, 3.0.0)"
+        },
+        "compile": {
+          "lib/netstandard1.5/NHamcrest.XUnit.dll": {}
+        },
+        "runtime": {
+          "lib/netstandard1.5/NHamcrest.XUnit.dll": {}
         }
       },
       "runtime.debian.8-x64.runtime.native.System.Security.Cryptography.OpenSsl/4.3.0": {
@@ -2412,6 +2431,20 @@
         "runtime": {
           "lib/netstandard1.1/xunit.execution.dotnet.dll": {}
         }
+      },
+      "MAptekaGet/1.0.0": {
+        "type": "project",
+        "framework": ".NETCoreApp,Version=v1.1",
+        "dependencies": {
+          "FSharp.Core": "4.1.0",
+          "Microsoft.NETCore.App": "1.1.1"
+        },
+        "compile": {
+          "bin/placeholder/netcoreapp1.1/MAptekaGet.dll": {}
+        },
+        "runtime": {
+          "bin/placeholder/netcoreapp1.1/MAptekaGet.dll": {}
+        }
       }
     }
   },
@@ -2534,21 +2567,6 @@
         "build/FSharp.NET.Current.Sdk.targets",
         "build/FSharp.NET.Sdk.props",
         "buildCrossTargeting/FSharp.NET.Sdk.targets"
-      ]
-    },
-    "FsUnit.xUnit/1.4.1": {
-      "sha512": "ALyeVwEHTNOXBSZDth+Qm5ftgDoh7WAnHuFROFs6AfQCtvRpy21c77Ea/ItsNM+NvfOhovAfgg5kPrxNNSkJgg==",
-      "type": "package",
-      "path": "fsunit.xunit/1.4.1",
-      "files": [
-        "fsunit.xunit.1.4.1.nupkg.sha512",
-        "fsunit.xunit.nuspec",
-        "lib/net45/FsUnit.Xunit.XML",
-        "lib/net45/FsUnit.Xunit.dll",
-        "lib/net45/FsUnit.Xunit.pdb",
-        "lib/net45/NHamcrest.dll",
-        "lib/net45/NHamcrest.pdb",
-        "tools/install.ps1"
       ]
     },
     "Libuv/1.9.1": {
@@ -2937,6 +2955,30 @@
         "NETStandard.Library.nuspec",
         "ThirdPartyNotices.txt",
         "dotnet_library_license.txt"
+      ]
+    },
+    "NHamcrest/2.0.1": {
+      "sha512": "vxZsN8LTByWuCldM02ovkxZ1bCRjm0jyUzXsprbpehvPf2/QdZ7GPIKclXp3+tyuCv9XLDmp2S0naiQILIPeHA==",
+      "type": "package",
+      "path": "nhamcrest/2.0.1",
+      "files": [
+        "lib/net451/NHamcrest.dll",
+        "lib/net451/NHamcrest.xml",
+        "lib/netstandard1.5/NHamcrest.dll",
+        "lib/netstandard1.5/NHamcrest.xml",
+        "nhamcrest.2.0.1.nupkg.sha512",
+        "nhamcrest.nuspec"
+      ]
+    },
+    "NHamcrest.XUnit/2.0.1": {
+      "sha512": "C4G4lch2U4BoEEF5tIn2V55GAEmyMpCwoH1vK4jwe3CMYi7WYfN5M+eDHL5Rk7DMpnFMC7jIWcdpcieni2yRmQ==",
+      "type": "package",
+      "path": "nhamcrest.xunit/2.0.1",
+      "files": [
+        "lib/net451/NHamcrest.XUnit.dll",
+        "lib/netstandard1.5/NHamcrest.XUnit.dll",
+        "nhamcrest.xunit.2.0.1.nupkg.sha512",
+        "nhamcrest.xunit.nuspec"
       ]
     },
     "runtime.debian.8-x64.runtime.native.System.Security.Cryptography.OpenSsl/4.3.0": {
@@ -7436,14 +7478,20 @@
         "xunit.extensibility.execution.2.3.0-beta2-build3683.nupkg.sha512",
         "xunit.extensibility.execution.nuspec"
       ]
+    },
+    "MAptekaGet/1.0.0": {
+      "type": "project",
+      "path": "../../src/MAptekaGet.Core/MAptekaGet.fsproj",
+      "msbuildProject": "../../src/MAptekaGet.Core/MAptekaGet.fsproj"
     }
   },
   "projectFileDependencyGroups": {
     ".NETCoreApp,Version=v1.1": [
       "FSharp.Core >= 4.1.*",
       "FSharp.NET.Sdk >= 1.0.*",
-      "FsUnit.xUnit >= 1.4.1",
+      "MAptekaGet >= 1.0.0",
       "Microsoft.NETCore.App >= 1.1.1",
+      "NHamcrest.XUnit >= 2.0.1",
       "xunit >= 2.3.0-beta2-build3683"
     ]
   },
@@ -7466,7 +7514,11 @@
       },
       "frameworks": {
         "netcoreapp1.1": {
-          "projectReferences": {}
+          "projectReferences": {
+            "D:\\Repo\\MApteka-Get\\MAptekaGet\\src\\MAptekaGet.Core\\MAptekaGet.fsproj": {
+              "projectPath": "D:\\Repo\\MApteka-Get\\MAptekaGet\\src\\MAptekaGet.Core\\MAptekaGet.fsproj"
+            }
+          }
         }
       }
     },
@@ -7490,9 +7542,9 @@
             "target": "Package",
             "version": "2.3.0-beta2-build3683"
           },
-          "FsUnit.xUnit": {
+          "NHamcrest.XUnit": {
             "target": "Package",
-            "version": "[1.4.1,)"
+            "version": "2.0.1"
           }
         }
       }
