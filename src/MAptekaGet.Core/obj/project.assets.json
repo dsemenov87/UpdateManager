@@ -2,6 +2,21 @@
   "version": 2,
   "targets": {
     ".NETCoreApp,Version=v1.1": {
+      "FParsec/1.0.3-beta-20170521": {
+        "type": "package",
+        "dependencies": {
+          "FSharp.Core": "4.1.17",
+          "NETStandard.Library": "1.6.1"
+        },
+        "compile": {
+          "lib/netstandard1.6/FParsec.dll": {},
+          "lib/netstandard1.6/FParsecCS.dll": {}
+        },
+        "runtime": {
+          "lib/netstandard1.6/FParsec.dll": {},
+          "lib/netstandard1.6/FParsecCS.dll": {}
+        }
+      },
       "FSharp.Compiler.Tools/4.1.17": {
         "type": "package",
         "build": {
@@ -2333,6 +2348,27 @@
     }
   },
   "libraries": {
+    "FParsec/1.0.3-beta-20170521": {
+      "sha512": "EHXMJpYEzMufqLN1tmWxvHw6iyP4NZDLzrkzViWFMlCNCuBb0If8BJLrzhP7Y8kx/0Xa59tTEBZHteL5Epgfhw==",
+      "type": "package",
+      "path": "fparsec/1.0.3-beta-20170521",
+      "files": [
+        "fparsec.1.0.3-beta-20170521.nupkg.sha512",
+        "fparsec.nuspec",
+        "lib/net40-client/FParsec.dll",
+        "lib/net40-client/FParsec.xml",
+        "lib/net40-client/FParsecCS.dll",
+        "lib/net40-client/FParsecCS.xml",
+        "lib/netstandard1.6/FParsec.dll",
+        "lib/netstandard1.6/FParsec.xml",
+        "lib/netstandard1.6/FParsecCS.dll",
+        "lib/netstandard1.6/FParsecCS.xml",
+        "lib/portable-net45+win8+wp8+wpa81/FParsec.dll",
+        "lib/portable-net45+win8+wp8+wpa81/FParsec.xml",
+        "lib/portable-net45+win8+wp8+wpa81/FParsecCS.dll",
+        "lib/portable-net45+win8+wp8+wpa81/FParsecCS.xml"
+      ]
+    },
     "FSharp.Compiler.Tools/4.1.17": {
       "sha512": "8yO223iFHjM8uFEg5w8mwIctn5YFXWCnJYol3P/KYJibPDLoysIUNdHSZBmpjY8nm2L5jBM7Isns918XYUi36w==",
       "type": "package",
@@ -7256,6 +7292,7 @@
   },
   "projectFileDependencyGroups": {
     ".NETCoreApp,Version=v1.1": [
+      "FParsec >= 1.0.3-beta-20170521",
       "FSharp.Core >= 4.1.*",
       "FSharp.NET.Sdk >= 1.0.*",
       "Microsoft.NETCore.App >= 1.1.1"
@@ -7299,6 +7336,10 @@
             "suppressParent": "All",
             "target": "Package",
             "version": "1.0.*"
+          },
+          "FParsec": {
+            "target": "Package",
+            "version": "1.0.3-beta-20170521"
           }
         }
       }

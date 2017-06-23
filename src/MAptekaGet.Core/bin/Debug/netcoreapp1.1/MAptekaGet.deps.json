@@ -1,18 +1,28 @@
 {
   "runtimeTarget": {
     "name": ".NETCoreApp,Version=v1.1",
-    "signature": "7d5bbe2f5a2d32db0a33e6d7ca8407fc952c56c2"
+    "signature": "1e648f5bb9afe0c4bd28d506c76fc11e2ae50a3c"
   },
   "compilationOptions": {},
   "targets": {
     ".NETCoreApp,Version=v1.1": {
       "maptekaget/1.0.0": {
         "dependencies": {
+          "FParsec": "1.0.3-beta-20170521",
           "FSharp.Core": "4.1.17",
           "FSharp.NET.Sdk": "1.0.5"
         },
         "runtime": {
           "MAptekaGet.dll": {}
+        }
+      },
+      "fparsec/1.0.3-beta-20170521": {
+        "dependencies": {
+          "FSharp.Core": "4.1.17"
+        },
+        "runtime": {
+          "lib/netstandard1.6/FParsec.dll": {},
+          "lib/netstandard1.6/FParsecCS.dll": {}
         }
       },
       "fsharp.compiler.tools/4.1.17": {},
@@ -43,6 +53,13 @@
       "type": "project",
       "serviceable": false,
       "sha512": ""
+    },
+    "fparsec/1.0.3-beta-20170521": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-EHXMJpYEzMufqLN1tmWxvHw6iyP4NZDLzrkzViWFMlCNCuBb0If8BJLrzhP7Y8kx/0Xa59tTEBZHteL5Epgfhw==",
+      "path": "fparsec/1.0.3-beta-20170521",
+      "hashPath": "fparsec.1.0.3-beta-20170521.nupkg.sha512"
     },
     "fsharp.compiler.tools/4.1.17": {
       "type": "package",

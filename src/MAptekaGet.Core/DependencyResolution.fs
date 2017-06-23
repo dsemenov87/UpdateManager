@@ -1,4 +1,4 @@
-module internal MAptekaGet.DependencyResolution
+module MAptekaGet.DependencyResolution_
 
 open System
 open System.Text
@@ -20,33 +20,47 @@ type ResolvedUpdate =
     Dependencies        : DependencySet
     Unlisted            : bool
   } 
-  override this.ToString () = sprintf "%O %O" this.Name this.Version
+  override this.ToString () =
+    sprintf "%O %O" this.Name this.Version
 
 type UpdateResolution = Map<UpdateName, ResolvedUpdate>
 
-module DependencySetFilter =
-  let isIncluded (restriction:MAptekaRestriction) (dependency:UpdateName * VersionRequirement * MAptekaRestriction) =
-    match dependency with
-    | _, _, vr when vr = MAptekaRestriction.noRestriction -> true
-    | _, _, mar -> mar |> MAptekaRestriction.isSubsetOf restriction
+let isCompatibleWith (dependencies:DependencySet) (update:ResolvedUpdate) : Result<unit, string> =
+  dependencies
+  // exists any not matching stuff
+  |> Seq.filter (fun (name, requirement, restriction) ->
+    name = update.Name && not (requirement |> VersionRequirement.isInRange update.Version)
+  )
+  |> Seq.tryHead
+  |> function
+    | None ->
+      Ok ()
+    | Some (name, requirement,_) ->
+      Error (sprintf "   Incompatible dependency: %O %O conflicts with resolved version %O" name requirement update.Version)
+      
+// module DependencySetFilter =
+//   let isIncluded (restriction:MAptekaRestriction) (dependency:UpdateName * VersionRequirement * MAptekaRestriction) =
+//     match dependency with
+//     | _, _, vr when vr = MAptekaRestriction.noRestriction -> true
+//     | _, _, mar -> mar |> MAptekaRestriction.isSubsetOf restriction
 
-  let filterByRestrictions (restriction:MAptekaRestriction) (dependencies:DependencySet) : DependencySet =
-    if restriction = MAptekaRestriction.noRestriction then
-      dependencies
-    else
-      dependencies
-      |> Set.filter (isIncluded restriction)
+//   let filterByRestrictions (restriction:MAptekaRestriction) (dependencies:DependencySet) : DependencySet =
+//     if restriction = MAptekaRestriction.noRestriction then
+//       dependencies
+//     else
+//       dependencies
+//       |> Set.filter (isIncluded restriction)
 
-  let isUpdateCompatible (dependencies:DependencySet) (update:ResolvedUpdate) : bool =
-    dependencies
-    // exists any not matching stuff
-    |> Seq.exists (fun (name, requirement, restriction) ->
-      if name = update.Name && not (requirement |> VersionRequirement.isInRange update.Version) then
-        printf "   Incompatible dependency: %O %O conflicts with resolved version %O" name requirement update.Version
-        true
-      else false
-    )
-    |> not // then we are not compatible
+//   let isUpdateCompatible (dependencies:DependencySet) (update:ResolvedUpdate) : bool =
+//     dependencies
+//     // exists any not matching stuff
+//     |> Seq.exists (fun (name, requirement, restriction) ->
+//       if name = update.Name && not (requirement |> VersionRequirement.isInRange update.Version) then
+//         printf "   Incompatible dependency: %O %O conflicts with resolved version %O" name requirement update.Version
+//         true
+//       else false
+//     )
+//     |> not // then we are not compatible
 
 let cleanupNames (model : UpdateResolution) : UpdateResolution =
   model
@@ -60,28 +74,81 @@ let cleanupNames (model : UpdateResolution) : UpdateResolution =
 
 type ResolverStep =
   { Relax: bool
-    FilteredVersions : Map<UpdateName, VersionInfo list>
-    CurrentResolution : Map<UpdateName,ResolvedUpdate>;
-    ClosedRequirements : Set<UpdateRequirement>
-    OpenRequirements : Set<UpdateRequirement>
+    FilteredVersions    : Map<UpdateName, VersionInfo list>
+    CurrentResolution   : Map<UpdateName, ResolvedUpdate>;
+    ClosedRequirements  : Set<UpdateRequirement>
+    OpenRequirements    : Set<UpdateRequirement>
   }
 
-[<RequireQualifiedAccess>]
+type Conflict =
+  { ResolverStep:   ResolverStep
+    RequirementSet: UpdateRequirement Set
+    Requirement:    UpdateRequirement
+    UpdateVersions: Map<UpdateName, VersionInfo seq>
+  }
+
 type Resolution =
-  | Ok of UpdateResolution
-  | Conflict of resolveStep       : ResolverStep
-              * requirementSet    : UpdateRequirement Set
-              * requirement       : UpdateRequirement
-              * getUpdateVersions : (UpdateName -> VersionInfo seq)
+  Resolution of (UpdateRequirement Set -> Result<UpdateResolution * UpdateRequirement Set, Conflict>)
+
+module Resolution =
+  /// Run a resolution with some input
+  let run (Resolution innerFn) = innerFn
+
+  let bindP f r =
+    Resolution <|
+      fun input ->
+        match run r input with
+        | Error conflict              -> Error conflict  
+        | Ok (value1,remainingInput)  -> run (f value1) remainingInput
+
+  /// Infix version of bindP
+  let ( >>= ) p f = bindP f p
+
+  /// Lift a value to a Resolution
+  let returnP x = 
+    Resolution (fun input -> Ok (x,input))
+
+  let mapP f = 
+    bindP (f >> returnP)
+  
+  /// infix version of mapP
+  let ( <!> ) = mapP
+
+  let makeCycle (ur: UpdateRequirement) =
+    let mapToList =
+      Map.toList >> List.map snd
+
+    let rec calc (current: UpdateRequirement) (remaining: UpdateRequirement list) =
+      let deps = current.Dependencies
+      if current.Dependencies |> Map.exists ur.Name then
+        true
+      else
+        let remaining =
+          deps
+          |> Map.toList
+          |> List.map snd
+          |> List.append remaining
+
+        match remaining with
+        | []      -> false
+        | r :: rs -> calc r remaining 
+    
+    calc ur (ur.Dependencies |> Map.toList)
+
+  // | Ok of UpdateResolution
+  // | Conflict of resolveStep       : ResolverStep
+  //             * requirementSet    : UpdateRequirement Set
+  //             * requirement       : UpdateRequirement
+  //             * getUpdateVersions : (UpdateName -> VersionInfo seq)
 
 let getResolutionConflicts (res:Resolution) =
-    match res with
-    | Resolution.Ok _ -> Set.empty
-    | Resolution.Conflict (currentStep,_,lastUpdateRequirement,_) ->
-        currentStep.ClosedRequirements
-        |> Set.union currentStep.OpenRequirements
-        |> Set.add lastUpdateRequirement
-        |> Set.filter (fun x -> x.Name = lastUpdateRequirement.Name)
+  match res with
+  | Resolution.Ok _ -> Set.empty
+  | Resolution.Conflict (currentStep,_,lastUpdateRequirement,_) ->
+      currentStep.ClosedRequirements
+      |> Set.union currentStep.OpenRequirements
+      |> Set.add lastUpdateRequirement
+      |> Set.filter (fun x -> x.Name = lastUpdateRequirement.Name)
 
 let buildResolutionConflictReport (errorReport:StringBuilder)  (conflicts:UpdateRequirement Set) =
   let formatVR (vr:VersionRequirement) =
