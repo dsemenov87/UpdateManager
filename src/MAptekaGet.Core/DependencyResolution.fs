@@ -1,517 +1,133 @@
-module MAptekaGet.DependencyResolution_
+namespace MAptekaGet
 
-open System
-open System.Text
-open System.Collections.Generic
-open MAptekaGet.Domain
-open MAptekaGet.Utils
-
-type UpdateDetails =
-  { Name               : UpdateName
-    DownloadLink       : string
-    Unlisted           : bool
-    DirectDependencies : DependencySet
-  }
-
-type ResolvedUpdate =
-  { Name                : UpdateName
-    Version             : VersionInfo
-    MAptekaRestriction  : MAptekaRestriction
-    Dependencies        : DependencySet
-    Unlisted            : bool
-  } 
-  override this.ToString () =
-    sprintf "%O %O" this.Name this.Version
-
-type UpdateResolution = Map<UpdateName, ResolvedUpdate>
-
-let isCompatibleWith (dependencies:DependencySet) (update:ResolvedUpdate) : Result<unit, string> =
-  dependencies
-  // exists any not matching stuff
-  |> Seq.filter (fun (name, requirement, restriction) ->
-    name = update.Name && not (requirement |> VersionRequirement.isInRange update.Version)
-  )
-  |> Seq.tryHead
-  |> function
-    | None ->
-      Ok ()
-    | Some (name, requirement,_) ->
-      Error (sprintf "   Incompatible dependency: %O %O conflicts with resolved version %O" name requirement update.Version)
-      
-// module DependencySetFilter =
-//   let isIncluded (restriction:MAptekaRestriction) (dependency:UpdateName * VersionRequirement * MAptekaRestriction) =
-//     match dependency with
-//     | _, _, vr when vr = MAptekaRestriction.noRestriction -> true
-//     | _, _, mar -> mar |> MAptekaRestriction.isSubsetOf restriction
-
-//   let filterByRestrictions (restriction:MAptekaRestriction) (dependencies:DependencySet) : DependencySet =
-//     if restriction = MAptekaRestriction.noRestriction then
-//       dependencies
-//     else
-//       dependencies
-//       |> Set.filter (isIncluded restriction)
-
-//   let isUpdateCompatible (dependencies:DependencySet) (update:ResolvedUpdate) : bool =
-//     dependencies
-//     // exists any not matching stuff
-//     |> Seq.exists (fun (name, requirement, restriction) ->
-//       if name = update.Name && not (requirement |> VersionRequirement.isInRange update.Version) then
-//         printf "   Incompatible dependency: %O %O conflicts with resolved version %O" name requirement update.Version
-//         true
-//       else false
-//     )
-//     |> not // then we are not compatible
-
-let cleanupNames (model : UpdateResolution) : UpdateResolution =
-  model
-  |> Map.map (fun _ upd ->
-    { upd
-      with
-        Dependencies =
-          upd.Dependencies
-          |> Set.map (fun (name, v, d) -> model.[name].Name, v, d)
-    }) 
-
-type ResolverStep =
-  { Relax: bool
-    FilteredVersions    : Map<UpdateName, VersionInfo list>
-    CurrentResolution   : Map<UpdateName, ResolvedUpdate>;
-    ClosedRequirements  : Set<UpdateRequirement>
-    OpenRequirements    : Set<UpdateRequirement>
-  }
-
-type Conflict =
-  { ResolverStep:   ResolverStep
-    RequirementSet: UpdateRequirement Set
-    Requirement:    UpdateRequirement
-    UpdateVersions: Map<UpdateName, VersionInfo seq>
-  }
-
-type Resolution =
-  Resolution of (UpdateRequirement Set -> Result<UpdateResolution * UpdateRequirement Set, Conflict>)
-
-module Resolution =
-  /// Run a resolution with some input
-  let run (Resolution innerFn) = innerFn
-
-  let bindP f r =
-    Resolution <|
-      fun input ->
-        match run r input with
-        | Error conflict              -> Error conflict  
-        | Ok (value1,remainingInput)  -> run (f value1) remainingInput
-
-  /// Infix version of bindP
-  let ( >>= ) p f = bindP f p
-
-  /// Lift a value to a Resolution
-  let returnP x = 
-    Resolution (fun input -> Ok (x,input))
-
-  let mapP f = 
-    bindP (f >> returnP)
+module DependencyResolution =
+  module VC = VersionConstraint
   
-  /// infix version of mapP
-  let ( <!> ) = mapP
+  type Tree<'a> =
+    | Node of 'a * Tree<'a> seq
 
-  let makeCycle (ur: UpdateRequirement) =
-    let mapToList =
-      Map.toList >> List.map snd
+  let private activationUpdate (activation: Activation) : Update =
+    match activation with
+    | InitialA upd      -> upd
+    | ChildA (upd,_,_)  -> upd
 
-    let rec calc (current: UpdateRequirement) (remaining: UpdateRequirement list) =
-      let deps = current.Dependencies
-      if current.Dependencies |> Map.exists ur.Name then
-        true
-      else
-        let remaining =
-          deps
-          |> Map.toList
-          |> List.map snd
-          |> List.append remaining
+  let private activationParent (activation: Activation) =
+    match activation with
+    | InitialA _            -> None
+    | ChildA (_,_,parent)   -> Some parent
 
-        match remaining with
-        | []      -> false
-        | r :: rs -> calc r remaining 
+  type State = Activation * Activation list
+
+  let candidateTree (initial: Update) (allVersions: Update list) : Tree<State> =
+    let versionsOf updName =
+      List.filter (fun v -> v.Name = updName) allVersions
     
-    calc ur (ur.Dependencies |> Map.toList)
-
-  // | Ok of UpdateResolution
-  // | Conflict of resolveStep       : ResolverStep
-  //             * requirementSet    : UpdateRequirement Set
-  //             * requirement       : UpdateRequirement
-  //             * getUpdateVersions : (UpdateName -> VersionInfo seq)
-
-let getResolutionConflicts (res:Resolution) =
-  match res with
-  | Resolution.Ok _ -> Set.empty
-  | Resolution.Conflict (currentStep,_,lastUpdateRequirement,_) ->
-      currentStep.ClosedRequirements
-      |> Set.union currentStep.OpenRequirements
-      |> Set.add lastUpdateRequirement
-      |> Set.filter (fun x -> x.Name = lastUpdateRequirement.Name)
-
-let buildResolutionConflictReport (errorReport:StringBuilder)  (conflicts:UpdateRequirement Set) =
-  let formatVR (vr:VersionRequirement) =
-    vr.ToString ()
-    |> fun s -> if String.IsNullOrWhiteSpace s then ">= 0" else s
-
-  match conflicts with
-  | s when s.IsEmpty -> errorReport
-  | conflicts ->
-    errorReport.AppendLine (sprintf "  Conflict detected:") |> ignore
-
-    let getConflictMessage req =
-      let vr = formatVR req.VersionRequirement
-      sprintf "   - Requested update %O: %s" req.Name vr
-    
-    conflicts
-    |> Seq.fold (fun (errorReport:StringBuilder) conflict ->
-      errorReport.AppendLine (getConflictMessage conflict)) errorReport
-
-let getResolutionErrorText showResolvedUpdates = function
-  | Resolution.Ok _ -> ""
-  | Resolution.Conflict (currentStep,_,_,getVersionF) as res ->
-    let errorText =
-      if showResolvedUpdates && not currentStep.CurrentResolution.IsEmpty then
-        ( StringBuilder().AppendLine  "  Resolved updates:"
-        , currentStep.CurrentResolution)
-        ||> Map.fold (fun sb _ resolvedUpdate ->
-            sb.AppendLine (sprintf "   - %O %O" resolvedUpdate.Name resolvedUpdate.Version))
-      else StringBuilder()
-
-    match getResolutionConflicts res with
-    | c when c.IsEmpty  ->
-      errorText.AppendLine(sprintf
-        "  Could not resolve update %O. Unknown resolution error."
-          (Seq.head currentStep.OpenRequirements))
-    | cfs when cfs.Count = 1 ->
-      let c = cfs.MinimumElement
-      let errorText = buildResolutionConflictReport errorText cfs
-      match getVersionF c.Name |> Seq.toList with
-      | [] -> errorText.AppendLine(sprintf  "   - No versions available.")
-      | avalaibleVersions ->
-        ( errorText.AppendLine(sprintf  "   - Available versions:")
-        , avalaibleVersions )
-        ||> List.fold (fun sb elem -> sb.AppendLine(sprintf "     - %O" elem))
-    | conflicts -> buildResolutionConflictReport errorText conflicts
-    |> string
-
-let getResolutionModelOrFail = function
-  | Resolution.Ok model -> model
-  | Resolution.Conflict _ as res ->
-    failwithf  "There was a version conflict during update resolution.\n\
-                %s\n  Please try to relax some conditions or resolve the conflict manually." (getResolutionErrorText true res)
-
-let isResolutionDone = function
-  | Resolution.Ok _ -> true
-  | _ -> false
-
-type Resolution with
-  member self.GetConflicts () = getResolutionConflicts self
-  member self.GetErrorText showResolvedUpdates = getResolutionErrorText showResolvedUpdates self
-  member self.GetModelOrFail () = getResolutionModelOrFail self
-  member self.IsDone = isResolutionDone self
-
-let calcOpenRequirements (exploredUpdate:ResolvedUpdate,globalMAptekaRestrictions,(versionToExplore,_),dependency,resolverStep:ResolverStep) =
-  let dependenciesByName =
-    // there are updates which define multiple dependencies to the same update
-    // we compress these here
-    let dict = Dictionary<_,_>()
-    exploredUpdate.Dependencies
-    |> Set.iter (fun ((name,v,r) as dep) ->
-      match dict.TryGetValue name with
-      | true,(_,v2,r2) ->
-        match v,v2 with
-        | VersionRequirement ra1, VersionRequirement ra2 ->
-          let newRestrictions = r .|| r2
-          if ra2 |> VersionRange.includes ra1 then
-            dict.[name] <- (name,v, newRestrictions)
-          elif ra1 |> VersionRange.includes ra2 then
-            dict.[name] <- (name,v2,newRestrictions)
-          else dict.[name] <- dep
-      | _ -> dict.Add(name,dep))
-    dict
-    |> Seq.map (fun kv -> kv.Value)
-    |> Set.ofSeq
-
-  let rest =
-    resolverStep.OpenRequirements
-    |> Set.remove dependency
-
-  dependenciesByName
-  |> Set.map (fun (n, v, restriction) ->
-    let newRestrictions =
-      (restriction .&& exploredUpdate.MAptekaRestriction .&& globalMAptekaRestrictions)
-      |> fun xs -> if xs = MAptekaRestriction.noRestriction then exploredUpdate.MAptekaRestriction else xs
-
-    { dependency
-      with
-        Name = n
-        VersionRequirement = v
-        Graph = Set.add dependency dependency.Graph
-    })
-  |> Set.filter (fun ({VersionRequirement = (VersionRequirement range)} as d) ->
-    resolverStep.ClosedRequirements
-    |> Set.exists (fun ({VersionRequirement = (VersionRequirement xrange)} as x) ->
-      x.Name = d.Name &&
-        (x = d ||
-         range |> VersionRange.includes xrange))
-    |> not)
-  |> Set.filter (fun d ->
-    resolverStep.OpenRequirements
-    |> Set.exists (fun x -> x.Name = d.Name && x = d && x.MAptekaRestriction = d.MAptekaRestriction)
-    |> not)
-  |> Set.union rest
-
-let getResolverStrategy
-  globalStrategyForDirectDependencies
-  globalStrategyForTransitives
-  (allRequirementsOfCurrentUpdate:Set<UpdateRequirement>)
-  (currentRequirement:UpdateRequirement) =
-  
-  if currentRequirement.Parent.IsRootRequirement() && Set.count allRequirementsOfCurrentUpdate = 1 then
-    let combined = currentRequirement.ResolverStrategyForDirectDependencies ++ globalStrategyForDirectDependencies
-    defaultArg combined ResolverStrategy.Max
-  else
-    let combined =
-      (allRequirementsOfCurrentUpdate
-        |> Seq.filter (fun x -> x.Depth > 0)
-        |> Seq.sortBy (fun x -> x.Depth, x.ResolverStrategyForTransitives <> globalStrategyForTransitives, x.ResolverStrategyForTransitives <> Some ResolverStrategy.Max)
-        |> Seq.map (fun x -> x.ResolverStrategyForTransitives)
-        |> Seq.fold (++) None)
-        ++ globalStrategyForTransitives
-
-    defaultArg combined ResolverStrategy.Max
-
-type UpdateMode =
-  | UpdateFunctional of FunctionalName
-  | UpdateFiltered of FunctionalName * UpdateFilter
-  | Install
-  | UpdateAll
-
-type private UpdateConfig =
-  { Dependency         : UpdateRequirement
-    FunctionalName     : FunctionalName
-    MAptekaRestriction : MAptekaRestriction
-    RootSettings       : IDictionary<UpdateName,MAptekaRestriction>
-    Version            : VersionInfo
-    UpdateMode         : UpdateMode
-  } 
-  member self.HasMAptekaRestriction =
-    self.MAptekaRestriction <> MAptekaRestriction.noRestriction
-
-  member self.HasDependencyRestrictions =
-    self.Dependency.MAptekaRestriction <> MAptekaRestriction.noRestriction
-
-let private updateRestrictions (updCongig:UpdateConfig) (update:ResolvedUpdate) =
-  let newRestrictions =
-    if  not updCongig.HasMAptekaRestriction
-      && (MAptekaRestriction.noRestriction = update.MAptekaRestriction
-      ||  not updCongig.HasDependencyRestrictions )
-    then
-      MAptekaRestriction.noRestriction
-    else
-      // Restriction in the protocol file
-      let globalUpdateRestriction =
-        match updCongig.RootSettings.TryGetValue update.Name with
-        | true, s -> s
-        | _ -> MAptekaRestriction.noRestriction
-      
-      let updateRestriction = update.MAptekaRestriction
-      let dependencyRestriction = updCongig.Dependency.MAptekaRestriction
-      let globalSettings = updCongig.MAptekaRestriction
-
-      // We assume the user knows what he is doing
-      globalSettings .|| ( updateRestriction .&& dependencyRestriction .&& globalSettings )
-
-  { update with
-      MAptekaRestriction = newRestrictions
-  }
-
-let private exploreUpdateConfig
-  getPackageDetailsBlock
-  (updConfig:UpdateConfig) =
-  
-  let dependency, version = updConfig.Dependency, updConfig.Version
-  match updConfig.UpdateMode with
-  | Install -> printf  " - %O %A" dependency.Name version
-  | _ ->
-    match dependency.VersionRequirement with
-    | VersionRequirement (Specific _) when dependency.Parent.IsRootRequirement() ->
-      printf " - %O is pinned to %O" dependency.Name version
-    | _ -> printf  " - %O %A" dependency.Name version
-
-  let newRestrictions =
-    dependency.MAptekaRestriction .&& updConfig.MAptekaRestriction
-  try
-    let updateDetails : UpdateDetails =
-      getPackageDetailsBlock updConfig.FunctionalName dependency.Name version
-    let filteredDependencies =
-      DependencySetFilter.filterByRestrictions newRestrictions updateDetails.DirectDependencies
-    Some
-      {   Name                = updateDetails.Name
-          Version             = version
-          Dependencies        = filteredDependencies
-          Unlisted            = updateDetails.Unlisted
-          MAptekaRestriction  = newRestrictions
+    let rec buildTree acts constrActs =
+      seq {
+        match constrActs with
+        | [] -> ()
+        | (constrAct, constr) :: cs ->
+          match constr with
+          | Dependency (updName, _) when acts // skip updates already in tree
+                                          |> List.map activationUpdate
+                                          |> List.exists (fun upd -> upd.Name = updName)
+                                          |> not -> 
+              yield! Seq.map (nodeForVersion acts constrAct constr cs) (versionsOf updName)
+          | _ ->
+              yield! buildTree acts cs
       }
-  with exn ->
-    printf "    Package not available.%s      Message: %s" Environment.NewLine exn.Message
-    None
-   
-type StackPack =
-  { ExploredUpdates     : Dictionary<UpdateName*VersionInfo,ResolvedUpdate>
-    KnownConflicts      : HashSet<HashSet<UpdateRequirement> * (VersionInfo list * bool) option>
-    ConflictHistory     : Dictionary<UpdateName, int>
-  }
+             
+    and nodeForVersion acts constrAct constr cs v =
+      let a' =
+        ChildA (v, constr, constrAct)
+      let nextConstrs =
+        (List.allPairs [a'] v.Constraints) @ cs
+      in
+        Node ((a', a'::acts), (buildTree (a'::acts) nextConstrs))
+    let a =
+      InitialA initial 
+    in
+      Node ((a, []), (buildTree [a] (List.allPairs [a] initial.Constraints)))
 
-let private getExploredUpdate (updConfig:UpdateConfig) getUpdateDetailsBlock (stackpack:StackPack) =
-  let key = (updConfig.Dependency.Name, updConfig.Version)
-
-  match stackpack.ExploredUpdates.TryGetValue key with
-  | true, update ->
-    let package = updateRestrictions updConfig update
-    stackpack.ExploredUpdates.[key] <- update
-    printf "   Retrieved Explored Package  %O" update
-    stackpack, Some(true, update)
-  | false,_ ->
-    match exploreUpdateConfig getUpdateDetailsBlock updConfig with
-    | Some explored ->
-      printf "   Found Explored Package  %O" explored
-      stackpack.ExploredUpdates.Add(key,explored)
-      stackpack, Some(false, explored)
-    | None ->
-      stackpack, None
-
-let private getCompatibleVersions
-  (currentStep:ResolverStep)
-  functionalName
-  (currentRequirement:UpdateRequirement)
-  (getVersionsF: ResolverStrategy -> FunctionalName -> UpdateName -> VersionInfo seq)
-  globalOverride
-  globalStrategyForDirectDependencies
-  globalStrategyForTransitives =
+  let private stateConstraints ((_,acts): State) : (Activation * Constraint) list =
+    let zippedDeps a =
+      List.allPairs [a] (activationUpdate a).Constraints
+    in
+      List.collect zippedDeps acts
+ 
+  let private isComplete ((_,acts): State) : bool =
+    let updates =
+      List.map activationUpdate acts
+    in
+      updates
+      |> List.collect (fun upd -> upd.Constraints)
+      |> List.choose (function Dependency (updateName, dependencyConstraint) -> Some updateName | _ -> None)
+      |> List.forall (fun updateName ->
+        updates
+        |> List.filter (fun upd -> upd.Name = updateName)
+        |> List.length = 1
+      )
+  
+  /// will remove all nodes and their descendants that match the predicate from a tree
+  let rec private prune<'a>
+    (predicate: 'a -> bool)
+    (Node (root, descendants): Tree<'a>) : Tree<'a> seq =
     
-  printfn "  Trying to resolve %O" currentRequirement
+    seq {
+      if predicate root
+        then yield Node (root, Seq.collect (prune predicate) descendants)
+    }
+  
+  /// finds previous activation of update
+  let private findUpd updName ((_,acts): State) =
+    acts
+    |> List.map activationUpdate
+    |> List.tryFind (fun upd -> upd.Name = updName)
 
-  match Map.tryFind currentRequirement.Name currentStep.FilteredVersions with
-  | None ->
-    let allRequirementsOfCurrentPackage =
-      currentStep.OpenRequirements
-      |> Set.filter (fun r -> currentRequirement.Name = r.Name)
+  /// finds current mapteka restriction
+  let private findMapteka ((_,acts): State) =
+    acts
+    |> List.collect ((fun upd -> upd.Constraints) << activationUpdate)
+    |> List.choose (function MApteka vdisj -> Some vdisj | _ -> None)
+    |> List.reduce (.&&)
 
-    // we didn't select a version yet so all versions are possible
-    let isInRange mapF ver =
-      allRequirementsOfCurrentPackage
-      |> Set.forall (fun r -> (mapF r).VersionRequirement |> VersionRequirement.isInRange ver)
-
-    let getSingleVersion v = Seq.singleton v
+  let rec firstConflict ((act, acts) as state : State) constrActs =
+    match constrActs with
+    | [] -> None
+    | (depAct, constr) :: ds ->
+      match constr with
+      | MApteka vdisj ->
+          if VC.isDisjunctionCompatible maptekaVersion vdisj then
+            firstConflict state ds maptekaVersion
+          else
+            Some (MAptekaConflict act)
       
-    let availableVersions =
-      match currentRequirement.VersionRequirement with
-      //| OverrideAll v -> getSingleVersion v
-      | VersionRequirement (Specific v) -> getSingleVersion v
-      | _ ->
-        let resolverStrategy = getResolverStrategy globalStrategyForDirectDependencies globalStrategyForTransitives allRequirementsOfCurrentPackage currentRequirement
-        getVersionsF resolverStrategy functionalName currentRequirement.Name
+      | Dependency (updName, disj) as d ->
+          match findPrevActivation updName act with
+          | None ->
+              firstConflict state ds maptekaVersion
+          | Some a ->
+          if (activationUpdate a).IsCompatibleTo disj then
+            firstConflict state ds maptekaVersion
+          elif activationParent a = Some depAct then
+            Some (PrimaryConflict act)
+          else
+            Some (SecondaryConflict (act, depAct))
 
-    Seq.filter (isInRange id) (availableVersions) |> Seq.cache
-
-  | Some versions ->
-    // we already selected a version so we can't pick a different
-    versions |> Seq.filter (fun vi -> VersionRequirement.isInRange vi currentRequirement.VersionRequirement)
-
-let private getConflicts
-  (currentStep:ResolverStep)
-  (currentRequirement:UpdateRequirement)
-  (knownConflicts:HashSet<HashSet<UpdateRequirement> * (VersionInfo list * bool) option>) =
+  let labelInconsistent maptekaVersion (state: State) : State * Conflict option =
+    (state, firstConflict state (List.rev (stDependencies state)) maptekaVersion)
     
-  let allRequirements =
-    currentStep.OpenRequirements
-    |> Set.filter (fun r -> r.Graph |> Set.contains currentRequirement |> not)
-    |> Set.union currentStep.ClosedRequirements
+  let rec mapTree f (Node (a, cs)) =
+    Node (f a, Seq.map (mapTree f) cs)  
+    
+  let rec leaves (tree: Tree<'a>) : 'a seq =
+    match tree with
+    | Node (a, cs) when Seq.isEmpty cs -> seq { yield a }
+    | Node (_, cs)                     -> Seq.collect leaves cs
 
-  knownConflicts
-  |> Seq.map (fun (conflicts,selectedVersion) ->
-    let isSubset = conflicts.IsSubsetOf allRequirements
-    match selectedVersion with
-    | None when isSubset -> conflicts
-    | Some(selectedVersion,_) ->
-      let n = (Seq.head conflicts).Name
-      match currentStep.FilteredVersions |> Map.tryFind n with
-      | Some v when v = selectedVersion && isSubset -> conflicts
-      | _ -> HashSet()
-    | _ -> HashSet())
-  |> Seq.collect id
-  |> HashSet
-
-let private getCurrentRequirement
-  updateFilter 
-  (openRequirements:Set<UpdateRequirement>)
-  (conflictHistory:Dictionary<_,_>) =
-
-  let initialMin = Seq.head openRequirements
-  let initialBoost = 0
-
-  let currentMin, _ =
-    ((initialMin,initialBoost),openRequirements)
-    ||> Seq.fold (fun (cmin,cboost) d ->
-      let boost =
-        match conflictHistory.TryGetValue d.Name with
-        | true,c -> -c
-        | _ -> 0
-      if UpdateRequirement.Compare(d,cmin,updateFilter,boost,cboost) = -1 then
-        d, boost
-      else
-        cmin,cboost)
-  currentMin
-
-type ConflictState =
-  { Status               : Resolution
-    LastConflictReported : DateTime
-    TryRelaxed           : bool
-    Conflicts            : Set<UpdateRequirement>
-    VersionsToExplore    : VersionInfo seq
-    //GlobalOverride       : bool
-  }
-
-let private boostConflicts
-  (filteredVersions:Map<UpdateName, (VersionInfo list * bool)>)
-  (currentRequirement:UpdateRequirement)
-  (stackpack:StackPack)
-  (conflictState:ConflictState) =
-
-  let conflictStatus = conflictState.Status
-  let isNewConflict  =
-    match stackpack.ConflictHistory.TryGetValue currentRequirement.Name with
-    | true,count ->
-      stackpack.ConflictHistory.[currentRequirement.Name] <- count + 1
-      false
-    | _ ->
-      stackpack.ConflictHistory.Add(currentRequirement.Name, 1)
-      true
-
-  let conflicts = conflictStatus.GetConflicts()
-  let lastConflictReported =
-    match conflicts with
-    | _ when not conflicts.IsEmpty  ->
-      let c = conflicts |> Seq.minBy (fun c -> c.Parent)
-      let selectedVersion = Map.tryFind c.Name filteredVersions
-      let key = conflicts |> HashSet,selectedVersion
-      stackpack.KnownConflicts.Add key |> ignore
-
-      let reportThatResolverIsTakingLongerThanExpected =
-        not isNewConflict && DateTime.Now - conflictState.LastConflictReported > TimeSpan.FromSeconds 10.
-
-      printfn "%s" <| conflictStatus.GetErrorText(false)
-      printfn "    ==> Trying different resolution."
-      if reportThatResolverIsTakingLongerThanExpected then
-        printfn "%s" <| conflictStatus.GetErrorText(false)
-        printfn "The process is taking longer than expected."
-        printfn "Paket may still find a valid resolution, but this might take a while."
-        DateTime.Now
-      else
-        conflictState.LastConflictReported
-    | _ -> conflictState.LastConflictReported
-  { conflictState with
-      LastConflictReported = lastConflictReported }, stackpack
+  let solution : Tree<State> -> Option<State> =
+    mapTree labelInconsistent
+    >> prune (Option.isSome << snd)
+    >> leaves
+    >> Seq.map fst
+    >> Seq.tryFind isComplete
