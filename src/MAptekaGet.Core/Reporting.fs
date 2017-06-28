@@ -243,10 +243,69 @@ module Reporting =
         outputToWriter tw maxCols doc
         tw.ToString ()
   
-  type Message =
+  type PrintMessage =
     { Summary: string
       Details: Doc list
     }
 
-  let updateInvalidityToMessage (err: Error) : Message =
+  let pmessage s d =
+    { Summary = s; Details = d }
+
+  let private drowUpdateTree (acts: Activation) 
+
+  let private resolutionToDoc (r: ResolutionResult) =
+    match r with
+    | Error (UpdateNotFound (act, suggestions)) ->
+        pmessage
+          ( "Could not find any updates named " + (activationUpdate act).ToString() + "."
+          )
+          [ Text "Here are some updates that have similar names:"
+            List.map (Text << (fun upd -> upd.Name.ToString())) suggestions |> vcat |> indent 4
+            Text "Maybe you want one of those?"
+          ]
+    | Error (PrimaryConflict act) ->
+        pmessage
+          ( "There was a conflict for update files."
+          )
+          []
+          
+  let toPrintMessage (msg: Message) : PrintMessage =
+    match msg with
+    | BadUpdateName (name, problem) ->
+        pmessage
+          ( "The update name '" + name + "' is invalid."
+          )
+          [ Text problem
+          ]
     
+    | BadVersion (name, problem) ->
+        pmessage
+          ( "The version '" + name + "' is invalid."
+          )
+          [ Text problem
+          ]
+
+    | BadConstraint (name, problem) ->
+        pmessage
+          ( "The constraint '" + name + "' is invalid."
+          )
+          [ Text problem
+          ]
+
+    | AlreadyPublished (update, version) ->
+        pmessage
+          ( sprintf
+              "Update %O has already been published.\nYou cannot publish it again! The new version should be %O."
+              update
+              version
+          )
+          []
+
+    | VersionUnexpected (update, version) ->
+        pmessage
+          ( "Cannot publish a package with an unexpected version.\n" +
+            "The next version should be " + version.ToString()
+          )
+          [] 
+
+  

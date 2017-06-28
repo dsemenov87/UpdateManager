@@ -104,6 +104,9 @@ module Domain =
       Size        : int<B>
     }
 
+    override this.ToString() =
+      sprintf "%O-%O" this.Name this.Version 
+
     override this.Equals (that) = 
       match that with
       | :? Update as that -> 
@@ -127,7 +130,17 @@ module Domain =
   
   type Activation =
     | InitialA  of Update
-    | ChildA    of Update * Constraint * Activation
+    | ChildA    of Update * Constraint * parent:Activation
+
+  let activationUpdate (activation: Activation) : Update =
+    match activation with
+    | InitialA upd      -> upd
+    | ChildA (upd,_,_)  -> upd
+
+  let activationParent (activation: Activation) =
+    match activation with
+    | InitialA _            -> None
+    | ChildA (_,_,parent)   -> Some parent
   
   module Parsing =
     open FParsec
@@ -194,20 +207,23 @@ module Domain =
       sepBy1 dependency rf
 
   type LookupSet = Update Set
-  
+
   /// All possible things that can happen in the use-cases
   type Message =
-    | BadUpdateName             of string * string
-    | BadVersion                of string * string
-    | BadConstraints            of string * string
-    | AlreadyPublished          of string
-    | VersionUnexpected         of Version * Version
-    | ConstraintsHaveNoSolution of ResolutionError
+    | BadUpdateName     of string * string
+    | BadVersion        of string * string
+    | BadConstraint     of string * string
+    | AlreadyPublished  of Update * Version
+    | VersionUnexpected of Update * Version
+    // todo | CausesCyclicDependency of Update * Version
+    | ResolutionMessage of ResolutionResult
   
-  and ResolutionError =
-    // the activation of the incompatible update
-    | PrimaryConflict   of Activation
-    //  the activation containing the original activation of the
-    //  update and the activation of the incompatible
-    //  dependency constraint
-    | SecondaryConflict of Activation * Activation
+  and ResolutionResult = Result<ResolutionSuccess, ResolutionFailure>
+  
+  and ResolutionSuccess =
+    | Published of Activation
+  
+  and ResolutionFailure =
+    | UpdateNotFound        of Activation * suggestions:Update list
+    | MissingUpdateVersion  of Activation
+    // | ConstraintConflict    of Conflict

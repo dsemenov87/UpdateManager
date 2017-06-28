@@ -1,20 +1,20 @@
 namespace MAptekaGet
 
 module DependencyResolution =
+  open Dist
+  
   type Tree<'a> =
     | Node of 'a * Tree<'a> seq
 
-  let private activationUpdate (activation: Activation) : Update =
-    match activation with
-    | InitialA upd      -> upd
-    | ChildA (upd,_,_)  -> upd
-
-  let private activationParent (activation: Activation) =
-    match activation with
-    | InitialA _            -> None
-    | ChildA (_,_,parent)   -> Some parent
-
   type State = Activation * Activation list
+
+  type Conflict =
+    // the activation of the incompatible update
+    | Primary   of Activation
+    //  the activation containing the original activation of the
+    //  update and the activation of the incompatible
+    //  dependency constraint
+    | Secondary of Activation * Activation
 
   let private candidateTree (initial: Update) (allVersions: Update Set) : Tree<State> =
     let versionsOf updName =
@@ -82,8 +82,8 @@ module DependencyResolution =
           if isDisjunctionCompatible (activationUpdate a).Version disj then
             firstConflict state cs
           else match activationParent a with
-                | Some depAct -> Some (PrimaryConflict act)
-                | _           -> Some (SecondaryConflict (act, depAct))
+                | Some depAct -> Some (Primary act)
+                | _           -> Some (Secondary (act, depAct))
 
   let private labelInconsistent (state: State) =
     (state, firstConflict state (List.rev (stateConstraints state)))
@@ -110,26 +110,56 @@ module DependencyResolution =
       )
       |> List.length
   
+  let private nearbyNames (target: UpdateName) (allUpdates: LookupSet) : Update seq =
+    let ratedNames =
+      Seq.map (fun upd -> (target <--> upd.Name, upd)) allUpdates
+    let sortedNames =
+      Seq.sortBy fst ratedNames
+    in
+      sortedNames |> Seq.take 4 |> Seq.map snd
+  
   let private solution =
     mapTree labelInconsistent
     >> prune (Option.isSome << snd)
     >> leaves
     >> Seq.map (fun ((s,_) as i) -> (i, distance s))
     >> Seq.sortBy snd
-    >> Seq.head
   
-  let resolve (initial: Update) (allVersions: LookupSet) =
-    candidateTree initial allVersions
+  let rec private solutionToResult input output (allUpdates: LookupSet) =
+    match input with
+    | [] -> failwith "can't be"
+    | (((act,acts), err), levelOfCompletition)::inpts ->
+        match err with
+        | None when levelOfCompletition > 0 ->
+            let suggestions =
+              nearbyNames (activationUpdate act).Name allUpdates
+            in
+              Error (UpdateNotFound (act, Seq.toList suggestions))
+        | None ->
+            acts
+            |> List.map ((fun upd -> upd.Name, upd) << activationUpdate)
+            |> Map.ofList
+            |> Ok
+        | Some (Primary act) ->
+            solutionToResult inpts (act::output) allUpdates
+        // | Some (Secondary _ as conf) ->
+        //     Error conf
+
+  let resolve (initial: Update) (allUpdates: LookupSet) =
+    candidateTree initial allUpdates
     |> solution
-    |> (fun (((act,acts), err), levelOfCompletition) ->
-      if levelOfCompletition > 0
-        then Error (PrimaryConflict act)
-        else match err with
-              | None ->
-                  acts
-                  |> List.map ((fun upd -> upd.Name, upd) << activationUpdate)
-                  |> Map.ofList
-                  |> Ok
-              | Some conf ->
-                  Error conf
+    |> Seq.fold (fun acc (((act,acts), err), levelOfCompletition) ->
+      match err with
+      | None when levelOfCompletition > 0 ->
+          let suggestions =
+            nearbyNames (activationUpdate act).Name allUpdates
+          in
+            Error (UpdateNotFound (act, Seq.toList suggestions))
+      | None ->
+          acts
+          |> List.map ((fun upd -> upd.Name, upd) << activationUpdate)
+          |> Map.ofList
+          |> Ok
+      | Some conf ->
+          Error (Conflict conf)
     )   
