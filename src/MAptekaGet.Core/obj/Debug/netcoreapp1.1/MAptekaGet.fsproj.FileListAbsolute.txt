@@ -4,3 +4,4 @@ D:\Repo\MApteka-Get\MAptekaGet\src\MAptekaGet.Core\bin\Debug\netcoreapp1.1\MApte
 D:\Repo\MApteka-Get\MAptekaGet\src\MAptekaGet.Core\bin\Debug\netcoreapp1.1\MAptekaGet.pdb
 D:\Repo\MApteka-Get\MAptekaGet\src\MAptekaGet.Core\obj\Debug\netcoreapp1.1\MAptekaGet.dll
 D:\Repo\MApteka-Get\MAptekaGet\src\MAptekaGet.Core\obj\Debug\netcoreapp1.1\MAptekaGet.pdb
+D:\Repo\MApteka-Get\MAptekaGet\src\MAptekaGet.Core\bin\Debug\netcoreapp1.1\MAptekaGet.dll

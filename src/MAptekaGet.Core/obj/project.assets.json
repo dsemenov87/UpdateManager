@@ -470,6 +470,12 @@
           "System.Xml.XDocument": "4.3.0"
         }
       },
+      "PPrint/2.0.0": {
+        "type": "package",
+        "dependencies": {
+          "FSharp.Core": "3.1.2.5"
+        }
+      },
       "runtime.debian.8-x64.runtime.native.System.Security.Cryptography.OpenSsl/4.3.0": {
         "type": "package",
         "runtimeTargets": {
@@ -2875,6 +2881,17 @@
         "NETStandard.Library.nuspec",
         "ThirdPartyNotices.txt",
         "dotnet_library_license.txt"
+      ]
+    },
+    "PPrint/2.0.0": {
+      "sha512": "HowBsqUHazKIR2JiWuWOrGe2GAw40vCtKieGvDNhvjmnhwoRtOym59+9c76h3m7qn6k6xDe7R+9IwO1nkKIuuA==",
+      "type": "package",
+      "path": "pprint/2.0.0",
+      "files": [
+        "lib/portable-net45+netcore45+wpa81+wp8/PPrint.dll",
+        "lib/portable-net45+netcore45+wpa81+wp8/PPrint.xml",
+        "pprint.2.0.0.nupkg.sha512",
+        "pprint.nuspec"
       ]
     },
     "runtime.debian.8-x64.runtime.native.System.Security.Cryptography.OpenSsl/4.3.0": {
@@ -7295,7 +7312,8 @@
       "FParsec >= 1.0.3-beta-20170521",
       "FSharp.Core >= 4.1.*",
       "FSharp.NET.Sdk >= 1.0.*",
-      "Microsoft.NETCore.App >= 1.1.1"
+      "Microsoft.NETCore.App >= 1.1.1",
+      "PPrint >= 2.0.0"
     ]
   },
   "packageFolders": {
@@ -7340,6 +7358,10 @@
           "FParsec": {
             "target": "Package",
             "version": "1.0.3-beta-20170521"
+          },
+          "PPrint": {
+            "target": "Package",
+            "version": "2.0.0"
           }
         }
       }

@@ -1,7 +1,7 @@
 {
   "runtimeTarget": {
     "name": ".NETCoreApp,Version=v1.1",
-    "signature": "1e648f5bb9afe0c4bd28d506c76fc11e2ae50a3c"
+    "signature": "23f8ae8ff501d9be4251c9710bd095ac2d3e5e58"
   },
   "compilationOptions": {},
   "targets": {
@@ -10,7 +10,8 @@
         "dependencies": {
           "FParsec": "1.0.3-beta-20170521",
           "FSharp.Core": "4.1.17",
-          "FSharp.NET.Sdk": "1.0.5"
+          "FSharp.NET.Sdk": "1.0.5",
+          "PPrint": "2.0.0"
         },
         "runtime": {
           "MAptekaGet.dll": {}
@@ -44,6 +45,11 @@
       "fsharp.net.sdk/1.0.5": {
         "dependencies": {
           "FSharp.Compiler.Tools": "4.1.17"
+        }
+      },
+      "pprint/2.0.0": {
+        "dependencies": {
+          "FSharp.Core": "4.1.17"
         }
       }
     }
@@ -81,6 +87,13 @@
       "sha512": "sha512-6qJGV06m6Av5VTJxYKI2PnC75pJi3dWyqNEuM2068Wo94O08jHAhTy8hSiE3PKZ2YsKcDyomo3RBnveLxwQqwQ==",
       "path": "fsharp.net.sdk/1.0.5",
       "hashPath": "fsharp.net.sdk.1.0.5.nupkg.sha512"
+    },
+    "pprint/2.0.0": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-HowBsqUHazKIR2JiWuWOrGe2GAw40vCtKieGvDNhvjmnhwoRtOym59+9c76h3m7qn6k6xDe7R+9IwO1nkKIuuA==",
+      "path": "pprint/2.0.0",
+      "hashPath": "pprint.2.0.0.nupkg.sha512"
     }
   }
 }

@@ -8,6 +8,7 @@
     <Compile Include="Utils.fs"/>
     <Compile Include="Domain.fs"/>
     <Compile Include="DependencyResolution.fs"/>
+    <Compile Include="Reporting.fs"/>
     <Compile Include="Program.fs"/>
   </ItemGroup>
   <ItemGroup>

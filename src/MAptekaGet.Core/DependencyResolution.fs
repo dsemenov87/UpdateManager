@@ -1,8 +1,6 @@
 namespace MAptekaGet
 
 module DependencyResolution =
-  module VC = VersionConstraint
-  
   type Tree<'a> =
     | Node of 'a * Tree<'a> seq
 
@@ -18,9 +16,12 @@ module DependencyResolution =
 
   type State = Activation * Activation list
 
-  let candidateTree (initial: Update) (allVersions: Update list) : Tree<State> =
+  let private candidateTree (initial: Update) (allVersions: Update Set) : Tree<State> =
     let versionsOf updName =
-      List.filter (fun v -> v.Name = updName) allVersions
+      allVersions
+      |> Seq.filter (fun v -> v.Name = updName)
+      |> Seq.sortBy (fun v -> v.Version)
+      |> Seq.rev  // newer is always better
     
     let rec buildTree acts constrActs =
       seq {
@@ -54,80 +55,81 @@ module DependencyResolution =
       List.allPairs [a] (activationUpdate a).Constraints
     in
       List.collect zippedDeps acts
- 
-  let private isComplete ((_,acts): State) : bool =
+  
+  let rec private prune<'a>
+    (predicate: 'a -> bool)
+    (Node (root, descendants): Tree<'a>) : Tree<'a> =
+    
+    let nextDescendants =
+      if predicate root
+        then Seq.map (prune predicate) descendants
+        else Seq.empty
+    
+    Node (root, nextDescendants)
+  
+  /// finds previous activation of update
+  let private findUpd updName ((_,acts): State) =
+    List.tryFind (fun a -> (activationUpdate a).Name = updName) acts
+
+  let rec private firstConflict ((act, acts) as state : State) constrActs =
+    match constrActs with
+    | [] -> None
+    | (depAct, Dependency (updName, disj) as d) :: cs ->
+        match findUpd updName state with
+        | None ->
+            firstConflict state cs
+        | Some a ->
+          if isDisjunctionCompatible (activationUpdate a).Version disj then
+            firstConflict state cs
+          else match activationParent a with
+                | Some depAct -> Some (PrimaryConflict act)
+                | _           -> Some (SecondaryConflict (act, depAct))
+
+  let private labelInconsistent (state: State) =
+    (state, firstConflict state (List.rev (stateConstraints state)))
+    
+  let rec private mapTree f (Node (a, cs)) =
+    Node (f a, Seq.map (mapTree f) cs)  
+    
+  let rec private leaves (tree: Tree<'a>) : 'a seq =
+    match tree with
+    | Node (a, cs) when Seq.isEmpty cs -> seq { yield a }
+    | Node (_, cs)                     -> Seq.collect leaves cs
+
+  /// add the number of updates that are missing for a state to become complete as our distance measure.
+  let private distance ((_,acts): State) =
     let updates =
       List.map activationUpdate acts
     in
       updates
       |> List.collect (fun upd -> upd.Constraints)
-      |> List.choose (function Dependency (updateName, dependencyConstraint) -> Some updateName | _ -> None)
-      |> List.forall (fun updateName ->
+      |> List.filter (fun (Dependency (updateName, dependencyConstraint)) ->
         updates
-        |> List.filter (fun upd -> upd.Name = updateName)
-        |> List.length = 1
+        |> List.exists (fun upd -> upd.Name = updateName)
+        |> not
       )
+      |> List.length
   
-  /// will remove all nodes and their descendants that match the predicate from a tree
-  let rec private prune<'a>
-    (predicate: 'a -> bool)
-    (Node (root, descendants): Tree<'a>) : Tree<'a> seq =
-    
-    seq {
-      if predicate root
-        then yield Node (root, Seq.collect (prune predicate) descendants)
-    }
-  
-  /// finds previous activation of update
-  let private findUpd updName ((_,acts): State) =
-    acts
-    |> List.map activationUpdate
-    |> List.tryFind (fun upd -> upd.Name = updName)
-
-  /// finds current mapteka restriction
-  let private findMapteka ((_,acts): State) =
-    acts
-    |> List.collect ((fun upd -> upd.Constraints) << activationUpdate)
-    |> List.choose (function MApteka vdisj -> Some vdisj | _ -> None)
-    |> List.reduce (.&&)
-
-  let rec firstConflict ((act, acts) as state : State) constrActs =
-    match constrActs with
-    | [] -> None
-    | (depAct, constr) :: ds ->
-      match constr with
-      | MApteka vdisj ->
-          if VC.isDisjunctionCompatible maptekaVersion vdisj then
-            firstConflict state ds maptekaVersion
-          else
-            Some (MAptekaConflict act)
-      
-      | Dependency (updName, disj) as d ->
-          match findPrevActivation updName act with
-          | None ->
-              firstConflict state ds maptekaVersion
-          | Some a ->
-          if (activationUpdate a).IsCompatibleTo disj then
-            firstConflict state ds maptekaVersion
-          elif activationParent a = Some depAct then
-            Some (PrimaryConflict act)
-          else
-            Some (SecondaryConflict (act, depAct))
-
-  let labelInconsistent maptekaVersion (state: State) : State * Conflict option =
-    (state, firstConflict state (List.rev (stDependencies state)) maptekaVersion)
-    
-  let rec mapTree f (Node (a, cs)) =
-    Node (f a, Seq.map (mapTree f) cs)  
-    
-  let rec leaves (tree: Tree<'a>) : 'a seq =
-    match tree with
-    | Node (a, cs) when Seq.isEmpty cs -> seq { yield a }
-    | Node (_, cs)                     -> Seq.collect leaves cs
-
-  let solution : Tree<State> -> Option<State> =
+  let private solution =
     mapTree labelInconsistent
     >> prune (Option.isSome << snd)
     >> leaves
-    >> Seq.map fst
-    >> Seq.tryFind isComplete
+    >> Seq.map (fun ((s,_) as i) -> (i, distance s))
+    >> Seq.sortBy snd
+    >> Seq.head
+  
+  let resolve (initial: Update) (allVersions: LookupSet) =
+    candidateTree initial allVersions
+    |> solution
+    |> (fun (((act,acts), err), levelOfCompletition) ->
+      if levelOfCompletition > 0
+        then Error (PrimaryConflict act)
+        else match err with
+              | None ->
+                  acts
+                  |> List.map ((fun upd -> upd.Name, upd) << activationUpdate)
+                  |> Map.ofList
+                  |> Ok
+              | Some conf ->
+                  Error conf
+    )   
