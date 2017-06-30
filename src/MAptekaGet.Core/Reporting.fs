@@ -1,6 +1,8 @@
 namespace MAptekaGet
 
 module Reporting =
+  type NEL<'a> = NonEmptyList<'a>
+  module NEL = NonEmptyList
 
   [<AutoOpen>]
   module PrettyPrint = 
@@ -242,6 +244,10 @@ module Reporting =
         use tw = new StringWriter ()
         outputToWriter tw maxCols doc
         tw.ToString ()
+
+      let println maxCols doc =
+        outputWithFun System.Console.Write maxCols doc
+        System.Console.Write "\n"
   
   type PrintMessage =
     { Summary: string
@@ -251,61 +257,112 @@ module Reporting =
   let pmessage s d =
     { Summary = s; Details = d }
 
-  let private drowUpdateTree (acts: Activation) 
+  /// Neat 2-dimensional drawing of a tree.
+  let rec drawTree (Node (s, ts): Tree<string>) : Doc =
+    let shift first other br =
+      chr '|' <.> ((txt first <+> drawTree br) |> nestBy other)
+    let rec drawBranches = function
+      | []      -> Doc.Empty
+      | [br]    -> shift "`-" "   " br
+      | br::brs -> shift "+-" "|  " br <.> (drawBranches brs) 
+    in
+      txt s <.> (ts |> Seq.toList |> drawBranches)
+
+  let rec private treeFromActivation (act: Activation) =
+    let rec parents act =
+      seq {
+        match activationParent act with
+        | Some parentAct ->
+            yield show (activationUpdate parentAct)
+            yield! parents parentAct
+        | None -> ()
+      }
+    in  
+      NEL.create (show (activationUpdate act)) (Seq.toList (parents act))
+      |> NEL.reverse
+      |> Tree.fromNonEmptyList
 
   let private resolutionToDoc (r: ResolutionResult) =
     match r with
+    | Ok act ->
+        pmessage
+          ( "Update " + show (activationUpdate act) + " was published successfully.\n" +
+            "See a depependency tree below."
+          )
+          [ drawTree (treeFromActivation act)
+          ]
     | Error (UpdateNotFound (act, suggestions)) ->
         pmessage
           ( "Could not find any updates named " + (activationUpdate act).ToString() + "."
           )
-          [ Text "Here are some updates that have similar names:"
-            List.map (Text << (fun upd -> upd.Name.ToString())) suggestions |> vcat |> indent 4
-            Text "Maybe you want one of those?"
+          [ txt "Here are some updates that have similar names:"
+            List.map (txt << (fun upd -> upd.Name.ToString())) suggestions |> vcat |> indent 4
+            txt "Maybe you want one of those?"
           ]
-    | Error (PrimaryConflict act) ->
+    | Error (IncompatibleConstraints _) ->
+        failwith "not implemented yet."
+
+    | Error (MissingUpdateVersion acts) ->
+        let docTree, update =
+          match acts with
+          | [] -> Doc.Empty, "<not resolved>"
+          | act::_ ->
+              let update = (activationUpdate act).ToString()
+              match (activationParent act) with
+              | None -> txt update, update 
+              | Some parentAct ->
+                  let tree =
+                    Node (parentAct, acts |> Seq.map Tree.singleton)
+                    |> Tree.map (fun node -> node.ToString())
+                  in
+                    drawTree tree, update
+
         pmessage
-          ( "There was a conflict for update files."
+          ( "Cannot resolve dependencies. Missing update version " + update + "."
           )
-          []
-          
+          [ docTree ]
+
   let toPrintMessage (msg: Message) : PrintMessage =
     match msg with
-    | BadUpdateName (name, problem) ->
-        pmessage
-          ( "The update name '" + name + "' is invalid."
-          )
-          [ Text problem
-          ]
-    
-    | BadVersion (name, problem) ->
-        pmessage
-          ( "The version '" + name + "' is invalid."
-          )
-          [ Text problem
-          ]
+    | PublishMessage pmsg ->
+      match pmsg with
+      | BadUpdateName (name, problem) ->
+          pmessage
+            ( "The update name '" + name + "' is invalid."
+            )
+            [ Text problem
+            ]
+      
+      | BadVersion (name, problem) ->
+          pmessage
+            ( "The version '" + name + "' is invalid."
+            )
+            [ Text problem
+            ]
 
-    | BadConstraint (name, problem) ->
-        pmessage
-          ( "The constraint '" + name + "' is invalid."
-          )
-          [ Text problem
-          ]
+      | BadConstraint (name, problem) ->
+          pmessage
+            ( "The constraint '" + name + "' is invalid."
+            )
+            [ Text problem
+            ]
 
-    | AlreadyPublished (update, version) ->
-        pmessage
-          ( sprintf
-              "Update %O has already been published.\nYou cannot publish it again! The new version should be %O."
-              update
-              version
-          )
-          []
+      | AlreadyPublished (update, version) ->
+          pmessage
+            ( sprintf
+                "Update %O has already been published.\nYou cannot publish it again! The new version should be %O."
+                update
+                version
+            )
+            []
 
-    | VersionUnexpected (update, version) ->
-        pmessage
-          ( "Cannot publish a package with an unexpected version.\n" +
-            "The next version should be " + version.ToString()
-          )
-          [] 
+      | VersionUnexpected (update, version) ->
+          pmessage
+            ( "Cannot publish a package with an unexpected version.\n" +
+              "The next version should be " + version.ToString()
+            )
+            []
+
+      | ResolutionMessage resolResult -> resolutionToDoc resolResult
 
   

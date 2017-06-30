@@ -1,26 +1,40 @@
 ﻿open System
 
+open MAptekaGet
+open MAptekaGet.Reporting
+open MAptekaGet.Utils.Parsing
+open MAptekaGet.Utils.ResultOperators
+open MAptekaGet.Domain.Parsing
+open FParsec
+
 [<EntryPoint>]
 let main argv =
-  // parse argv.[0] //"(=3.0.7 AND <3.0.8)"
-  // // |> simplify
-  // |> printfn "%A"
   
-  // let r = And [Exactly (VersionInfo.parse "4.6.7"); Or [AtLeast (VersionInfo.parse "4.6.8"); Not (Exactly (VersionInfo.parse "4.6.7"))]]
-  // let d = MAptekaRestriction.normalize r
+  let tree =
+    Node
+      ( "ws-client-1.0.0" ,
+        [ Node
+            ( "http-client-1.0.5",
+              [ Node
+                  ( "network-2.1.3",
+                    [ Node
+                        ( "xml-parser-1.2.0",
+                          [ Node ("det-parse-0.7.3", [])
+                            Node ("det-parse-0.5.7", [])
+                          ])  
+                    ])  
+                  ]) 
+            ])
+
+  version <-- "2.2.0" <!> verifies <*> (versionConstraint <-- "2.2.0 <= v < 2.2.0") |> printf "%A"
   
-  // let l1 = AtLeast (VersionInfo.parse "4.0.0")
-  // let l2 = Exactly (VersionInfo.parse "4.5.0")
-  // l1
-  // |> normalize
-  // |> removeNegatedLiteralsWhichOccurSinglePositive
-  // |> removeSubsetLiteralsInAndClause
-  // |> removeSubsetLiteralsInOrClause
-  // |> removeUneccessaryAndClauses
-  // |> removeUneccessaryOrClauses
-  // |> replaceWithNoRestrictionIfAnyLiteralListIsEmpty
-  // |> simplify
-  // |> printfn "%A" 
-  // l2 |> simplify |> printfn "%A" 
-  // l1 .&& l2 |> printfn "%A" 
+  // drawTree tree |> println ^ Some 78
+
+  // System.Int32.Parse "01" |> printf "%d"
+
+  // [txt "a"; line; txt "b"; line; txt "c"]
+  // |> hcat
+  // // |> nest 2
+  // |> println ^ Some 78
+
   0 // return an integer exit code

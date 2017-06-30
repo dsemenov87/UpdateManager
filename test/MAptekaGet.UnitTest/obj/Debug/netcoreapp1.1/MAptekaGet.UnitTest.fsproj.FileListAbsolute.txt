@@ -66,3 +66,5 @@ D:\Repo\MApteka-Get\MAptekaGet\test\MAptekaGet.UnitTest\bin\Debug\netcoreapp1.1\
 D:\Repo\MApteka-Get\MAptekaGet\test\MAptekaGet.UnitTest\bin\Debug\netcoreapp1.1\xunit.assert.dll
 D:\Repo\MApteka-Get\MAptekaGet\test\MAptekaGet.UnitTest\bin\Debug\netcoreapp1.1\xunit.core.dll
 D:\Repo\MApteka-Get\MAptekaGet\test\MAptekaGet.UnitTest\bin\Debug\netcoreapp1.1\xunit.execution.dotnet.dll
+D:\Repo\MApteka-Get\MAptekaGet\test\MAptekaGet.UnitTest\bin\Debug\netcoreapp1.1\FParsec.dll
+D:\Repo\MApteka-Get\MAptekaGet\test\MAptekaGet.UnitTest\bin\Debug\netcoreapp1.1\FParsecCS.dll

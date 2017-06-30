@@ -239,7 +239,18 @@ let inline should (f : 'a -> ^b) x (y : obj) =
   else
     Assert.That(y, c)
 
-let inline shouldFail (f:unit->unit) =
+let inline shouldSucceed (y : Result< 'T, 'TError>) =
+  match y with
+  | Ok y'   -> y'
+  | Error _ -> raise (MatchException("Method should succeed", "Returned Error", null)) 
+
+let inline shouldFail (y : Result< 'T, 'TError>) =
+  match y with
+  | Error y'-> y'
+  | Ok _    -> raise (MatchException("Method should fail", "Returned Ok", null)) 
+
+
+let inline shouldRaiseException (f:unit->unit) =
   let failed =
     try
       f()
@@ -256,6 +267,13 @@ let not' (expected:obj) = CustomMatchers.not' expected
 let throw (t:Type) = CustomMatchers.throw t
 let throwWithMessage (m:string) (t:Type) = CustomMatchers.throwWithMessage m t
 let be = CustomMatchers.be
+let inline shouldStrictEquals x y = Assert.StrictEqual(x, y)
+let inline shouldBeSucceed x y = y |> shouldSucceed |> shouldStrictEquals x
+let inline shouldBeFail x y = y |> shouldFail |> shouldStrictEquals x
+/// Infix version of shouldBeSucceed
+let inline (<==>) x y = shouldBeSucceed y x
+/// Infix version of shouldBeFail
+let inline (<?=>) x y = shouldBeFail y x
 let Null = CustomMatchers.Null
 let Empty = CustomMatchers.Empty
 let EmptyString = CustomMatchers.EmptyString

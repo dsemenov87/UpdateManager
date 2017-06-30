@@ -11,6 +11,7 @@ module Domain =
       Minor : uint32
       Patch : uint32
     } 
+    
     override x.ToString() = 
       sprintf "%d.%d.%d" x.Major x.Minor x.Patch
 
@@ -50,6 +51,7 @@ module Domain =
     
   type VersionConstraint =
     | Range of Version * RangeOp * RangeOp * Version
+    
     override this.ToString() =
       match this with
       | Range (vL, opL, opR, vR) -> sprintf "%O %O v %O %O" vL opL opR vR
@@ -85,23 +87,12 @@ module Domain =
       match this with
       | Uri uri -> uri.ToString()
       | Never   -> ""
-
-  /// bytes
-  [<Measure>] type B
   
   [<CustomEquality; CustomComparison>]
   type Update =
     { Name        : UpdateName 
       Version     : Version
-      Author      : string
-      Summary     : string
-      Description : string
-      ReleaseNotes: string
-      Created     : DateTime
       Constraints : Constraint list
-      Source      : UpdateSource
-      Md5Hash     : string
-      Size        : int<B>
     }
 
     override this.ToString() =
@@ -128,6 +119,25 @@ module Domain =
         | _ ->
           invalidArg "yobj" "cannot compare values of different types"
   
+  let addConstraint (constr: Constraint) (upd: Update) =
+    { upd with Constraints = constr :: upd.Constraints }
+
+  /// bytes
+  [<Measure>] type B
+  
+  type UpdateDetails =
+    { Author      : string
+      Summary     : string
+      Description : string
+      ReleaseNotes: string
+      Created     : DateTime
+      Source      : UpdateSource
+      Md5Hash     : string
+      Size        : int<B>
+    }
+  
+  type LookupSet = Map<Update, UpdateDetails> 
+
   type Activation =
     | InitialA  of Update
     | ChildA    of Update * Constraint * parent:Activation
@@ -147,11 +157,9 @@ module Domain =
     open Utils.Parsing
 
     let operator =
-      choice
-        [ pstring "<"   >>% Less
-          pstring "<="  >>% LessOrEqual
-        ]
-    
+      pchar '<' >>. opt (pchar '=')
+      |>> (fun x -> match x with None -> Less | _ -> LessOrEqual)
+
     let version: Parser<Version,unit> =
       let convertToUInt32 txt : Parser<_,_> =
         fun stream ->
@@ -176,7 +184,8 @@ module Domain =
       )
     
     let versionConstraint: Parser<VersionConstraint,unit> =
-      version .>> spaces .>>. operator .>> spaces .>>. operator .>> spaces .>>. version .>> spaces
+      version .>> spaces .>>. operator .>> spaces .>> pchar 'v'.>> spaces
+      .>>. operator .>> spaces .>>. version .>> spaces
       |>> (fun (((vL, opL), opR), vR) -> Range (vL, opL, opR, vR))
 
     let versionDisjunction: Parser<VDisjunction,unit> =
@@ -195,6 +204,10 @@ module Domain =
                       >> UpdateName
       
       many letter <?> "update name" |>> toUpdateName
+    
+    let update =
+      updateName .>> pchar '-' .>>. version .>> spaces
+      |>> (fun (name, vers) -> {Name = name; Version = vers; Constraints = []})
 
     let dependency = updateName
                   .>> spaces
@@ -202,28 +215,32 @@ module Domain =
                   .>> spaces
                   .>>.versionDisjunction
                   .>> spaces
+                  |>> Dependency
 
     let dependencies =
       sepBy1 dependency rf
 
-  type LookupSet = Update Set
-
   /// All possible things that can happen in the use-cases
   type Message =
-    | BadUpdateName     of string * string
-    | BadVersion        of string * string
-    | BadConstraint     of string * string
+    | PublishMessage of PublishMessage
+
+  and PublishMessage =
+    | BadUpdateFormat   of string
+    | BadConstraint     of string // maybe include in BadUpdateFormat?
     | AlreadyPublished  of Update * Version
     | VersionUnexpected of Update * Version
     // todo | CausesCyclicDependency of Update * Version
     | ResolutionMessage of ResolutionResult
-  
-  and ResolutionResult = Result<ResolutionSuccess, ResolutionFailure>
-  
-  and ResolutionSuccess =
-    | Published of Activation
+
+  and ResolutionResult = Result<Activation, ResolutionFailure>
   
   and ResolutionFailure =
-    | UpdateNotFound        of Activation * suggestions:Update list
-    | MissingUpdateVersion  of Activation
-    // | ConstraintConflict    of Conflict
+    | UpdateNotFound          of Activation * suggestions:Update list
+    | MissingUpdateVersion    of Activation list
+    | IncompatibleConstraints of Activation
+    
+  // type UpdateProgram =
+  //   | Publish of  name:UpdateName
+  //             *   version:Version
+  //             *   constraints:Constraint list
+  //             *
