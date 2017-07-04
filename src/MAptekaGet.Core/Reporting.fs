@@ -249,13 +249,23 @@ module Reporting =
         outputWithFun System.Console.Write maxCols doc
         System.Console.Write "\n"
   
+  type MessageMode =
+    | PrintSuccess
+    | PrintError
+    
+    override this.ToString () =
+      match this with
+      | PrintSuccess  -> "Success"
+      | PrintError    -> "Error"
+
   type PrintMessage =
-    { Summary: string
-      Details: Doc list
+    { Summary : string
+      Mode    : MessageMode
+      Details : Doc list
     }
 
-  let pmessage s d =
-    { Summary = s; Details = d }
+  let pmessage s d m =
+    { Summary = s; Details = d; Mode = m }
 
   /// Neat 2-dimensional drawing of a tree.
   let rec drawTree (Node (s, ts): Tree<string>) : Doc =
@@ -269,38 +279,54 @@ module Reporting =
       txt s <.> (ts |> Seq.toList |> drawBranches)
 
   let rec private treeFromActivation (act: Activation) =
-    let rec parents act =
+    let showNode =
+      sprintf "%O => %O"
+    let rec printUpToRoot constr act =
       seq {
-        match activationParent act with
-        | Some parentAct ->
-            yield show (activationUpdate parentAct)
-            yield! parents parentAct
-        | None -> ()
+        match act with
+        | InitialA upd ->
+            yield showNode upd constr
+        | ChildA (upd, nextConstr, constrAct) ->
+            yield showNode upd constr
+            yield! printUpToRoot nextConstr constrAct
       }
-    in  
-      NEL.create (show (activationUpdate act)) (Seq.toList (parents act))
-      |> NEL.reverse
+    in
+      match act with
+      | InitialA upd -> NEL.singleton (show upd)
+      | ChildA (upd, lastConstr, constrAct) ->
+          NEL.create (show (activationUpdate act)) (Seq.toList (printUpToRoot lastConstr act))
+          |> NEL.reverse
       |> Tree.fromNonEmptyList
 
   let private resolutionToDoc (r: ResolutionResult) =
     match r with
     | Ok act ->
         pmessage
-          ( "Update " + show (activationUpdate act) + " was published successfully.\n" +
+          ( "Update '" + show (activationUpdate act) + "' was published." +
             "See a depependency tree below."
           )
-          [ drawTree (treeFromActivation act)
+          [ drawTree (treeFromActivation act) |> indent 4
           ]
-    | Error (UpdateNotFound (act, suggestions)) ->
+          PrintSuccess
+
+    | Error (UpdateNotFound (_, updName, suggestions)) ->
         pmessage
-          ( "Could not find any updates named " + (activationUpdate act).ToString() + "."
+          ( "Could not find any updates named '" + updName.ToString() + "'."
           )
           [ txt "Here are some updates that have similar names:"
-            List.map (txt << (fun upd -> upd.Name.ToString())) suggestions |> vcat |> indent 4
+            List.map (txt << show) suggestions |> vcat |> indent 4
             txt "Maybe you want one of those?"
           ]
-    | Error (IncompatibleConstraints _) ->
-        failwith "not implemented yet."
+          PrintError
+
+    | Error (IncompatibleConstraints (act1, act2)) ->
+        pmessage
+          ( "There was a conflict for update version.")
+          [ drawTree (treeFromActivation act1) |> indent 4
+            drawTree (treeFromActivation act2) |> indent 4
+          ]
+          PrintError
+
 
     | Error (MissingUpdateVersion acts) ->
         let docTree, update =
@@ -313,39 +339,25 @@ module Reporting =
               | Some parentAct ->
                   let tree =
                     Node (parentAct, acts |> Seq.map Tree.singleton)
-                    |> Tree.map (fun node -> node.ToString())
+                    |> Tree.map (fun node -> (activationUpdate node).ToString())
                   in
                     drawTree tree, update
 
         pmessage
-          ( "Cannot resolve dependencies. Missing update version " + update + "."
+          ( "Cannot resolve dependencies. Missing update version '" + update + "'."
           )
-          [ docTree ]
+          [ docTree |> indent 4 ]
+          PrintError
 
   let toPrintMessage (msg: Message) : PrintMessage =
     match msg with
     | PublishMessage pmsg ->
       match pmsg with
-      | BadUpdateName (name, problem) ->
-          pmessage
-            ( "The update name '" + name + "' is invalid."
-            )
-            [ Text problem
-            ]
+      | BadUpdateFormat problem ->
+          pmessage "The update name is invalid." [ txt problem ] PrintError
       
-      | BadVersion (name, problem) ->
-          pmessage
-            ( "The version '" + name + "' is invalid."
-            )
-            [ Text problem
-            ]
-
-      | BadConstraint (name, problem) ->
-          pmessage
-            ( "The constraint '" + name + "' is invalid."
-            )
-            [ Text problem
-            ]
+      | BadConstraint _ ->
+         failwith "not implementded yet. Maybe remove clause?"
 
       | AlreadyPublished (update, version) ->
           pmessage
@@ -355,14 +367,44 @@ module Reporting =
                 version
             )
             []
+            PrintError
 
       | VersionUnexpected (update, version) ->
           pmessage
             ( "Cannot publish a package with an unexpected version.\n" +
-              "The next version should be " + version.ToString()
+              "The next version should be '" + version.ToString() + "'."
             )
             []
+            PrintError
 
       | ResolutionMessage resolResult -> resolutionToDoc resolResult
 
+  let private verticalAppend (a: Doc) (b: Doc) : Doc =
+    a <^> line <^> line <^> b
+
+  let private stack (allDocs: Doc list) : Doc =
+    match allDocs with
+    | [] ->
+        failwith "Do not use `stack` on empty lists."
+    
+    | doc::docs ->
+        List.fold verticalAppend doc docs
+   
+  let private start (mode: MessageMode) : Doc =
+    softbreak <^> (mode |> show |> txt) <^> txt ":"
+
+  let private pmsgToDoc (pmsg: PrintMessage) : Doc =
+    let {Summary=summary;Details=details;Mode=mode} = pmsg
+    let summaryDoc =
+      fillSep (start mode :: (summary |> words |> List.map txt))
+    in
+      stack (summaryDoc :: details)
+      <^> line
+      <^> line
+
+  let private toDoc : Message -> Doc =
+    pmsgToDoc << toPrintMessage
   
+  let printReport : Message -> string =
+    toDoc >> render ^ Some 78
+    

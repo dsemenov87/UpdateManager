@@ -36,35 +36,72 @@ module DR = DependencyResolution
 
 [<Fact>]
 let ``can check if dependency version is missing`` () =
-  let target =
-    update <-- "ws_client-1.0.0" 
-        <|*> (dependency <-- "http_client: 1.0.5 <= v <= 1.0.5" <!> addConstraint)
-        <|*> (dependency <-- "xml_parser: 1.0.0 < v < 1.2.0"    <!> addConstraint)
+  let constr =
+    dependency <-- "http_client: 1.0.5 <= v <= 1.0.5"
   
-  let lookupSet =
+  let target =
+    update <-- "ws_client-1.0.0" <|*> (constr <!> addConstraint)
+  
+  let ``http_client-1.0.0``= update <-- "http_client-1.0.0"
+  let ``http_client-1.0.2``= update <-- "http_client-1.0.2"
+  let ``http_client-1.0.3``= update <-- "http_client-1.0.3"
+  
+  let lookupSet = 
     [ target
-      update <-- "http_client-1.0.0" 
-      update <-- "http_client-1.0.2" 
-      update <-- "http_client-1.0.3"
+      ``http_client-1.0.0`` 
+      ``http_client-1.0.2``
+      ``http_client-1.0.3``
     ]
     |> ResultExt.sequence
 
-  let missingError =
-    let act1 = 
-    Error (MissingUpdateVersion )
-
-  let f =   
-    (Ok DR.resolve  <?> ResolutionMessage)
-    <*> (target     <?> BadUpdateFormat)
-    <*> (lookupSet  <?> BadUpdateFormat)
-    |> shouldSucceed
-    |> shouldBeFail ()
+  let childAct =
+    target <!> InitialA <!> (fun p c u -> ChildA (u, c, p))
+  
+  let acts =
+    [ childAct <*> constr <*> ``http_client-1.0.0``
+      childAct <*> constr <*> ``http_client-1.0.2``
+      childAct <*> constr <*> ``http_client-1.0.3``
+    ]
+    |> ResultExt.sequence
  
+  (Ok DR.resolve  <?> ResolutionMessage)
+  <*> (target     <?> BadUpdateFormat)
+  <*> (lookupSet  <?> BadUpdateFormat)
+  |> shouldSucceed
+  <?> ((<==>) (acts <!> MissingUpdateVersion))
+  |> shouldFail
+
+[<Fact>]
+let ``can check if dependency is not found`` () =
+  let constr =
+    dependency <-- "http_cilent: 1.0.5 <= v <= 1.0.5"
   
-  let res = target |> Result.map 
+  let target =
+    update <-- "ws_client-1.0.0" <|*> (constr <!> addConstraint)
   
-  // (target)
-  //           //  |> shouldSucceed
-  //            |> DR.resolve (shouldSucceed target) 
-   
-  res <==> Error (MissingUpdateVersion )
+  let ``http_client-1.0.0``= update <-- "http_client-1.0.0"
+  let ``http_client-1.0.2``= update <-- "http_client-1.0.2"
+  let ``http_client-1.0.3``= update <-- "http_client-1.0.3"
+  
+  let lookupSet = 
+    [ target
+      ``http_client-1.0.0`` 
+      ``http_client-1.0.2``
+      ``http_client-1.0.3``
+    ]
+    |> ResultExt.sequence
+
+  let suggestions =
+    [ UpdateName "ws_client"
+      UpdateName "http_client"
+    ]
+
+  let toUpdateNotFound suggs act =
+    UpdateNotFound (act, UpdateName "http_cilent", suggs)
+  
+  (Ok DR.resolve  <?> ResolutionMessage)
+  <*> (target     <?> BadUpdateFormat)
+  <*> (lookupSet  <?> BadUpdateFormat)
+  |> shouldSucceed
+  <?> ((<==>) (target <!> InitialA <!> toUpdateNotFound suggestions))
+  |> shouldFail

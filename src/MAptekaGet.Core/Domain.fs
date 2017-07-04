@@ -235,9 +235,9 @@ module Domain =
   and ResolutionResult = Result<Activation, ResolutionFailure>
   
   and ResolutionFailure =
-    | UpdateNotFound          of Activation * suggestions:Update list
+    | UpdateNotFound          of Activation * UpdateName * suggestions:UpdateName list
     | MissingUpdateVersion    of Activation list
-    | IncompatibleConstraints of Activation
+    | IncompatibleConstraints of Activation * Activation
     
   // type UpdateProgram =
   //   | Publish of  name:UpdateName

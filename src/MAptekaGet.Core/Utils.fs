@@ -5,12 +5,18 @@ module Utils =
   let inline show x = x.ToString()
   let inline cons head tail = head::tail
 
+  let inline words (text: string) = text.Split [|' '; '\n'|] |> Array.toList
+
+  let inline (^) x = x
+
   module ResultExt =
     /// apply a wrapped function to a wrapped value
-    let applyR fP xP = Result.bind (fun f -> Result.bind (Ok << f) xP ) fP 
+    let apply fP xP = Result.bind (fun f -> Result.bind (Ok << f) xP ) fP 
 
     /// lift a two parameter function to Result World
-    let lift2 f xP yP = applyR (applyR (Ok f) xP) yP
+    let lift2 f xP yP = apply (apply (Ok f) xP) yP
+
+    let applyR fR xR = Result.bind (fun f -> Result.bind f xR ) fR 
     
     /// Convert a list of Results into a Result of a list
     let rec sequence parserList =
@@ -32,9 +38,9 @@ module Utils =
     let inline (<?>) x f = Result.mapError f x
     
     /// infix version of apply
-    let ( <*> ) = applyR
+    let ( <*> ) = apply
     /// pipeline version of apply
-    let ( <|*> ) fP xP = applyR xP fP
+    let ( <|*> ) fP xP = apply xP fP
   
   module Parsing =
     open FParsec
