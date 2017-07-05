@@ -281,35 +281,33 @@ module Reporting =
   let rec private treeFromActivation (act: Activation) =
     let showNode =
       sprintf "%O => %O"
-    let rec printUpToRoot constr act =
+    let rec showUpToRoot constr act =
       seq {
         match act with
         | InitialA upd ->
             yield showNode upd constr
         | ChildA (upd, nextConstr, constrAct) ->
             yield showNode upd constr
-            yield! printUpToRoot nextConstr constrAct
+            yield! showUpToRoot nextConstr constrAct
       }
     in
       match act with
       | InitialA upd -> NEL.singleton (show upd)
       | ChildA (upd, lastConstr, constrAct) ->
-          NEL.create (show (activationUpdate act)) (Seq.toList (printUpToRoot lastConstr act))
+          NEL.create (show upd) (Seq.toList (showUpToRoot lastConstr constrAct))
           |> NEL.reverse
       |> Tree.fromNonEmptyList
 
-  let private resolutionToDoc (r: ResolutionResult) =
-    match r with
-    | Ok act ->
+  let private resolutionToDoc (msg: ResolutionMessage) =
+    match msg with
+    | ResolutionSuccess acts ->
         pmessage
-          ( "Update '" + show (activationUpdate act) + "' was published." +
-            "See a depependency tree below."
+          ( "The following updates can be published."
           )
-          [ drawTree (treeFromActivation act) |> indent 4
-          ]
+          [ List.map (txt << show << activationUpdate) acts |> vcat |> indent 4  ]
           PrintSuccess
 
-    | Error (UpdateNotFound (_, updName, suggestions)) ->
+    | UpdateNotFound (_, updName, suggestions) ->
         pmessage
           ( "Could not find any updates named '" + updName.ToString() + "'."
           )
@@ -319,7 +317,7 @@ module Reporting =
           ]
           PrintError
 
-    | Error (IncompatibleConstraints (act1, act2)) ->
+    | IncompatibleConstraints (act1, act2) ->
         pmessage
           ( "There was a conflict for update version.")
           [ drawTree (treeFromActivation act1) |> indent 4
@@ -328,7 +326,7 @@ module Reporting =
           PrintError
 
 
-    | Error (MissingUpdateVersion acts) ->
+    | MissingUpdateVersion acts ->
         let docTree, update =
           match acts with
           | [] -> Doc.Empty, "<not resolved>"
@@ -349,15 +347,20 @@ module Reporting =
           [ docTree |> indent 4 ]
           PrintError
 
-  let toPrintMessage (msg: Message) : PrintMessage =
+  let rec toPrintMessage (msg: Message) : PrintMessage =
     match msg with
     | PublishMessage pmsg ->
       match pmsg with
+      | ResolutionMessage resolResult ->
+          { resolutionToDoc resolResult with Summary = "The following updates were published." }
+
+      | _ -> 
+          toPrintMessage msg
+    
+    | CheckMessage pmsg ->
+      match pmsg with
       | BadUpdateFormat problem ->
           pmessage "The update name is invalid." [ txt problem ] PrintError
-      
-      | BadConstraint _ ->
-         failwith "not implementded yet. Maybe remove clause?"
 
       | AlreadyPublished (update, version) ->
           pmessage
@@ -371,7 +374,7 @@ module Reporting =
 
       | VersionUnexpected (update, version) ->
           pmessage
-            ( "Cannot publish a package with an unexpected version.\n" +
+            ( "You cannot publish a package with an unexpected version.\n" +
               "The next version should be '" + version.ToString() + "'."
             )
             []

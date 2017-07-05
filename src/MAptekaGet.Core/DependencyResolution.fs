@@ -15,11 +15,12 @@ module DependencyResolution =
     //  dependency constraint
     | Secondary of Activation * Activation
 
-  let internal candidateTree (initial: Update) (allVersions: Update list) : Tree<State> =
+  let private candidateTree (initials: NEL<Update>) (allVersions: Update list) : Tree<State> =
     let versionsOf updName =
       allVersions
       |> Seq.filter (fun v -> v.Name = updName)
-      |> Seq.sortBy (fun v -> v.Version) // older is always better
+      |> Seq.sortBy (fun v -> v.Version)
+      |> Seq.rev // newest is always better
     
     let rec buildTree acts constrActs =
       seq {
@@ -43,10 +44,16 @@ module DependencyResolution =
         (List.allPairs [a'] v.Constraints) @ cs
       in
         Node ((a', a'::acts), (buildTree (a'::acts) nextConstrs))
-    let a =
-      InitialA initial 
+    let { Head = head; Tail = tail } =
+      NEL.map InitialA initials
+    let acts =
+      head :: tail
+    let initConstraints =
+      initials
+      |> Seq.collect (fun upd -> upd.Constraints)
+      |> Seq.toList
     in
-      Node ((a, [a]), (buildTree [a] (List.allPairs [a] initial.Constraints)))
+      Node ((head, acts), (buildTree acts (List.allPairs acts initConstraints)))
 
   let private stateConstraints ((_,acts): State) : (Activation * Constraint) list =
     let zippedDeps a =
@@ -54,7 +61,7 @@ module DependencyResolution =
     in
       List.collect zippedDeps acts
   
-  let rec internal pruneTree<'a>
+  let rec private pruneTree<'a>
     (predicate: 'a -> bool)
     (Node (root, descendants): Tree<'a>) : Tree<'a> =
     
@@ -86,21 +93,21 @@ module DependencyResolution =
                   | _ ->
                       Some (Secondary (a, ChildA (update, constr, depAct)))
 
-  let internal labelInconsistent (state: State) =
+  let private labelInconsistent (state: State) =
     (state, firstConflict state (List.rev (stateConstraints state)))  
     
-  let internal leaves (Node (root, childs): Tree<'a>) : NEL<'a> =
+  let private leaves (Node (root, childs): Tree<'a>) : NEL<'a> =
     let rec calc (tree: Tree<'a>) =
       match tree with
       | Node (a, cs) when Seq.isEmpty cs -> seq [a]
-      | Node (_, cs)                     -> cs |> Seq.collect calc
+      | Node (_, cs)                     -> Seq.collect calc cs
     in
       match childs |> Seq.collect calc |> Seq.toList with
       | []    -> NEL.create root []
       | x::xs -> NEL.create x xs
 
   /// add the number of updates that are missing for a state to become complete as our distance measure.
-  let internal distance ((_,acts): State) =
+  let private distance ((_,acts): State) =
     let updates =
       List.map activationUpdate acts
     in
@@ -121,7 +128,7 @@ module DependencyResolution =
     |> Seq.distinct
     |> Seq.truncate 4
   
-  let internal aggregateToResult
+  let private aggregateToResult
     (allUpdates: Update list)
     (inputList: NEL<(State * Conflict option) * int>) =
 
@@ -129,7 +136,7 @@ module DependencyResolution =
       match inputs with
       | [] ->
           // printfn "loop: [] -> %A" primaryConflicts;
-          Error (MissingUpdateVersion (List.sortBy activationUpdate primaryConflicts))
+          MissingUpdateVersion (List.sortBy activationUpdate primaryConflicts)
       
       | ((((act,acts), inconsistencyError), levelOfIncompletition)::remains) ->
           // printfn "loop: x::xs -> err: %A, level: %A" inconsistencyError levelOfIncompletition;
@@ -143,10 +150,13 @@ module DependencyResolution =
           match stateConstraints (act, acts) with
           | [] -> failwith "stateConstraints can't be empty when levelOfIncompletition > 0."
           | (_,(Dependency (constrUpdName,_)))::_ ->
-              Error (UpdateNotFound (act, constrUpdName, Seq.toList suggestions))
+              UpdateNotFound (act, constrUpdName, Seq.toList suggestions)
             
       | None -> // consistant and complete -> solution
-          Ok act
+          acts
+          |> List.filter (function InitialA _ -> true | _ -> false)
+          |> ResolutionSuccess
+
       | Some (Primary _ as conf) ->
           match primaryConflicts with
           | [] ->
@@ -156,17 +166,17 @@ module DependencyResolution =
               // printfn "step: Some (Primary _ as conf) -> primaryConflicts: same: %b" ((activationParent confAct) = (activationParent act));
               if (activationParent confAct) = (activationParent act)
                 then loop (act::confAct::cas) allUpdates remains
-                else Error (MissingUpdateVersion (confAct::cas))
+                else MissingUpdateVersion (confAct::cas)
       | Some (Secondary (act1, act2)) ->
           // printfn "step: Some (Secondary (act1, act2)) -> %O\n%O" (activationUpdate act1) (activationUpdate act2);
-          Error (IncompatibleConstraints (act1, act2))
+          IncompatibleConstraints (act1, act2)
 
     let {Head=(((act,acts), inconsistencyError), levelOfIncompletition);Tail=remains} = inputList
     in
       step act acts [] inconsistencyError levelOfIncompletition remains
 
-  let resolve (initial: Update) (allUpdates: Update list) =
-    candidateTree initial allUpdates
+  let resolve (allUpdates: Update list) (initials: NEL<Update>) =
+    candidateTree initials allUpdates
     |> Tree.map labelInconsistent
     |> pruneTree (Option.isSome << snd)
     |> leaves

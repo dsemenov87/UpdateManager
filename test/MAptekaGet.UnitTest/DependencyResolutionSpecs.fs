@@ -3,105 +3,129 @@ module DependencyResolutionSpecs
 open Xunit
 open FsUnit.Xunit
 open MAptekaGet
-open MAptekaGet.Domain.Parsing
-open MAptekaGet.Utils.Parsing
-open MAptekaGet.Utils.ResultOp
+open CommonUtils
 
 module DR = DependencyResolution
-
-  // [ update <-- "ws_client-1.0.0" 
-  //     <|*> (dependency <-- "http_client: 1.0.5 <= v <= 1.0.5" <!> addConstraint)
-  //     <|*> (dependency <-- "xml_parser: 1.0.0 < v < 1.2.0" <!> addConstraint)
-    
-  //   update <-- "http_client-1.0.0" 
-  //     <|*> (dependency <-- "network: 2.0.0 <= v < 3.0.0" <!> addConstraint)
-      
-  //   update <-- "http_client-1.0.5" 
-  //     <|*> (dependency <-- "network: 2.1.0 <= v < 2.2.0" <!> addConstraint)
-
-  //   update <-- "network-2.0.7" 
-      
-  //   update <-- "network-2.1.3"
-
-  //   update <-- "xml_parser-1.0.0" 
-  //     <|*> (dependency <-- "det_parse: 0.5.0 <= v < 0.6.0" <!> addConstraint)
-
-  //   update <-- "xml_parser-1.2.0" 
-  //     <|*> (dependency <-- "det_parse: 0.6.0 <= v < 1.0.0" <!> addConstraint)
-
-  //   update <-- "det_parse-0.5.7"
-
-  //   update <-- "det_parse-0.7.3"
-  // ] 
+module NEL = NonEmptyList
 
 [<Fact>]
 let ``can check if dependency version is missing`` () =
-  let constr =
-    dependency <-- "http_client: 1.0.5 <= v <= 1.0.5"
-  
-  let target =
-    update <-- "ws_client-1.0.0" <|*> (constr <!> addConstraint)
-  
-  let ``http_client-1.0.0``= update <-- "http_client-1.0.0"
-  let ``http_client-1.0.2``= update <-- "http_client-1.0.2"
-  let ``http_client-1.0.3``= update <-- "http_client-1.0.3"
-  
-  let lookupSet = 
-    [ target
-      ``http_client-1.0.0`` 
-      ``http_client-1.0.2``
-      ``http_client-1.0.3``
-    ]
-    |> ResultExt.sequence
+  let ``1.0.5 <= http_client <= 1.0.5`` =
+    dep "http_client: 1.0.5 <= v <= 1.0.5"
 
-  let childAct =
-    target <!> InitialA <!> (fun p c u -> ChildA (u, c, p))
+  let ``ws_client-1.0.0`` =
+    upd "ws_client-1.0.0" |> addConstraint ``1.0.5 <= http_client <= 1.0.5`` 
+
+  let childA x =
+    ChildA (x, ``1.0.5 <= http_client <= 1.0.5``, InitialA ``ws_client-1.0.0``)
   
+  let lookupSet =
+    [ ``ws_client-1.0.0``
+      upd "http_client-1.0.0" 
+      upd "http_client-1.0.2"
+      upd "http_client-1.0.3"
+    ]
+
   let acts =
-    [ childAct <*> constr <*> ``http_client-1.0.0``
-      childAct <*> constr <*> ``http_client-1.0.2``
-      childAct <*> constr <*> ``http_client-1.0.3``
+    [ "http_client-1.0.0" 
+      "http_client-1.0.2"
+      "http_client-1.0.3"
     ]
-    |> ResultExt.sequence
+    |> List.map (childA << upd)
  
-  (Ok DR.resolve  <?> ResolutionMessage)
-  <*> (target     <?> BadUpdateFormat)
-  <*> (lookupSet  <?> BadUpdateFormat)
-  |> shouldSucceed
-  <?> ((<==>) (acts <!> MissingUpdateVersion))
-  |> shouldFail
-
+  DR.resolve lookupSet (NEL.singleton ``ws_client-1.0.0``)
+  |> shouldStrictEquals (MissingUpdateVersion acts)
+  
 [<Fact>]
 let ``can check if dependency is not found`` () =
-  let constr =
-    dependency <-- "http_cilent: 1.0.5 <= v <= 1.0.5"
+  let ``1.0.5 <= http_cilent <= 1.0.5`` =
+    dep "http_cilent: 1.0.5 <= v <= 1.0.5"
   
-  let target =
-    update <-- "ws_client-1.0.0" <|*> (constr <!> addConstraint)
+  let ``ws_client-1.0.0`` =
+    upd "ws_client-1.0.0" |> addConstraint ``1.0.5 <= http_cilent <= 1.0.5``
   
-  let ``http_client-1.0.0``= update <-- "http_client-1.0.0"
-  let ``http_client-1.0.2``= update <-- "http_client-1.0.2"
-  let ``http_client-1.0.3``= update <-- "http_client-1.0.3"
-  
-  let lookupSet = 
-    [ target
-      ``http_client-1.0.0`` 
-      ``http_client-1.0.2``
-      ``http_client-1.0.3``
+  let lookupSet =
+    [ ``ws_client-1.0.0``
+      upd "http_client-1.0.0" 
+      upd "http_client-1.0.2"
+      upd "http_client-1.0.3"
     ]
-    |> ResultExt.sequence
 
   let suggestions =
     [ UpdateName "ws_client"
       UpdateName "http_client"
     ]
 
-  let toUpdateNotFound suggs act =
-    UpdateNotFound (act, UpdateName "http_cilent", suggs)
-  
-  (Ok DR.resolve  <?> ResolutionMessage)
-  <*> (target     <?> BadUpdateFormat)
-  <*> (lookupSet  <?> BadUpdateFormat)
-  |> shouldSucceed
-  <?> ((<==>) (target <!> InitialA <!> toUpdateNotFound suggestions))
-  |> shouldFail
+  let expected =
+    UpdateNotFound (InitialA ``ws_client-1.0.0``, UpdateName "http_cilent", suggestions)
+
+  DR.resolve lookupSet (NEL.singleton ``ws_client-1.0.0``)
+  |> shouldStrictEquals expected
+
+[<Fact>]
+let ``can check if constraints are incompatible`` () =
+  let ``rest_client-1.0.0`` =
+    upd "rest_client-1.0.0"
+    |> addConstraint ^ dep "http_client: 1.0.1 <= v <= 1.0.1"
+    |> addConstraint ^ dep "json: 1.0.0 <= v <= 1.0.0"
+
+  let lookupSet = 
+    [ ``rest_client-1.0.0``
+      upd "http_client-1.0.1" |> addConstraint ^ dep "network: 1.2.2 <= v <= 1.2.2"
+      upd "network-1.2.2"     |> addConstraint ^ dep "bytes: 1.0.5 <= v < 2.0.0"
+      upd "network-2.0.1"
+      upd "json-1.0.0"        |> addConstraint ^ dep "bytes: 1.0.0 <= v <= 1.0.0"
+      upd "bytes-1.0.0"
+      upd "bytes-1.0.7"
+    ]
+
+  let a1 =
+    ChildA (  upd "bytes-1.0.0",
+              dep "bytes: 1.0.5 <= v < 2.0.0",
+              ChildA (  upd "network-1.2.2",
+                        dep "network: 1.2.2 <= v <= 1.2.2",
+                        ChildA (  upd "http_client-1.0.1",
+                                  dep "http_client: 1.0.1 <= v <= 1.0.1",
+                                  InitialA ( ``rest_client-1.0.0`` ))))
+
+  let a2 =
+    ChildA (  upd "bytes-1.0.0",
+              dep "bytes: 1.0.0 <= v <= 1.0.0",
+              ChildA (  upd "json-1.0.0",
+                        dep "json: 1.0.0 <= v <= 1.0.0",
+                        InitialA ( ``rest_client-1.0.0`` )))
+
+  in
+    DR.resolve lookupSet (NEL.singleton ``rest_client-1.0.0``)
+    |> shouldStrictEquals (IncompatibleConstraints (a2, a1))
+
+[<Fact>]
+let ``if solution exists then returns it't activation`` =
+  let ``rest_client-0.9.9`` =
+    upd "rest_client-0.9.9"
+    |> addConstraint ^ dep "http_client: 1.0.0 <= v <= 1.0.0"
+    |> addConstraint ^ dep "json: 1.0.0 <= v <= 1.0.0"
+
+  let lookupSet = 
+    [ ``rest_client-0.9.9``
+      upd "http_client-1.0.1" |> addConstraint ^ dep "network: 1.2.2 <= v <= 1.2.2"
+      upd "http_client-1.0.0" |> addConstraint ^ dep "network: 1.0.0 <= v <= 1.0.0"
+      upd "network-1.2.2"     |> addConstraint ^ dep "bytes: 1.0.5 <= v < 2.0.0"
+      upd "network-1.0.0"     |> addConstraint ^ dep "bytes: 1.0.0 <= v <= 1.0.0"
+      upd "json-1.0.0"        |> addConstraint ^ dep "bytes: 1.0.0 <= v <= 1.0.0"
+      upd "bytes-1.0.0"
+      upd "bytes-1.0.7"
+    ]
+
+  let a =
+    ChildA (  upd "bytes-1.0.0",
+              dep "bytes: 1.0.5 <= v < 2.0.0",
+              ChildA (  upd "network-1.2.2",
+                        dep "network: 1.2.2 <= v <= 1.2.2",
+                        ChildA (  upd "http_client-1.0.1",
+                                  dep "http_client: 1.0.1 <= v <= 1.0.1",
+                                  InitialA ( ``rest_client-0.9.9`` ))))
+
+  in
+    DR.resolve lookupSet (NEL.singleton ``rest_client-0.9.9``)
+    |> shouldStrictEquals (ResolutionSuccess [ InitialA ``rest_client-0.9.9``])

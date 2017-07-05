@@ -9,59 +9,7 @@ module Utils =
 
   let inline (^) x = x
 
-  module ResultExt =
-    /// apply a wrapped function to a wrapped value
-    let apply fP xP = Result.bind (fun f -> Result.bind (Ok << f) xP ) fP 
-
-    /// lift a two parameter function to Result World
-    let lift2 f xP yP = apply (apply (Ok f) xP) yP
-
-    let applyR fR xR = Result.bind (fun f -> Result.bind f xR ) fR 
-    
-    /// Convert a list of Results into a Result of a list
-    let rec sequence parserList =
-      let consP = lift2 cons
-      match parserList with
-      | []         -> Ok []
-      | head::tail -> consP head (sequence tail)
-
-  module ResultOp =
-    open ResultExt
-
-    /// Infix version of Result.bind
-    let inline (>>=) x f = Result.bind f x
-    
-    /// Infix version of Result.map
-    let inline (<!>) x f = Result.map f x
-
-    /// Infix version of Result.mapError
-    let inline (<?>) x f = Result.mapError f x
-    
-    /// infix version of apply
-    let ( <*> ) = apply
-    /// pipeline version of apply
-    let ( <|*> ) fP xP = apply xP fP
-  
-  module Parsing =
-    open FParsec
-    
-    let inline rf<'a> : Parser<char option, unit> =
-      opt (pchar '\r') .>> pchar '\n' <?> "end of line"
-
-    /// applies the parser p, ignores the result, and returns x.
-    let inline (>>%) p x = p |>> (fun _ -> x)
-
-    let inline toResult res =
-      match res with
-      | Success (res,_,_) -> Result.Ok res
-      | Failure _         -> Result.Error (sprintf "%A" res)
-    
-    let inline (<--) parser txt =
-      run parser txt |> toResult
-
-
-
-  /// A type-safe list that contains at least one element.
+/// A type-safe list that contains at least one element.
   type NonEmptyList<'t> =
     { Head: 't
       Tail: 't list
@@ -126,6 +74,69 @@ module Utils =
   
       Node (x, fromList xs)
 
+
+  module ResultExt =
+    /// apply a wrapped function to a wrapped value
+    let apply fP xP = Result.bind (fun f -> Result.bind (Ok << f) xP ) fP 
+
+    /// lift a two parameter function to Result World
+    let lift2 f xP yP = apply (apply (Ok f) xP) yP
+
+    let applyR fR xR = Result.bind (fun f -> Result.bind f xR ) fR 
+    
+    /// Convert a list of Results into a Result of a list
+    let rec sequence parserList =
+      let consP = lift2 cons
+      match parserList with
+      | []         -> Ok []
+      | head::tail -> consP head (sequence tail)
+
+    /// Convert a NonEmptyList of Results into a Result of a NonEmptyList
+    let rec sequenceNonEmpty {Head=h; Tail=t} =
+      match lift2 cons h (sequence t) with
+      | Error err   -> Error err
+      | Ok []       -> match h with
+                        | Error err -> Error err
+                        | Ok x      -> Ok (NonEmptyList.singleton x)
+      | Ok (x::xs)  -> Ok (NonEmptyList.create x xs)
+
+  module ResultOp =
+    open ResultExt
+
+    /// Infix version of Result.bind
+    let inline (>>=) x f = Result.bind f x
+    
+    /// Infix version of Result.map
+    let inline (<!>) x f = Result.map f x
+
+    /// Infix version of Result.mapError
+    let inline (<?>) x f = Result.mapError f x
+    
+    /// infix version of apply
+    let ( <*> ) = apply
+    /// pipeline version of apply
+    let ( <|*> ) fP xP = apply xP fP
+  
+  module Parsing =
+    open FParsec
+    
+    let inline rf<'a> : Parser<char option, unit> =
+      opt (pchar '\r') .>> pchar '\n' <?> "end of line"
+
+    /// applies the parser p, ignores the result, and returns x.
+    let inline (>>%) p x = p |>> (fun _ -> x)
+
+    let inline toResult res =
+      match res with
+      | Success (res,_,_) -> Result.Ok res
+      | Failure _         -> Result.Error (sprintf "%A" res)
+    
+    let inline (<--) parser txt =
+      run parser txt |> toResult
+
+
+
+  
   module Dist =
     /// Computes the restricted Damerau-Levenstein edit distance,
     /// also known as the "optimal string alignment" distance.

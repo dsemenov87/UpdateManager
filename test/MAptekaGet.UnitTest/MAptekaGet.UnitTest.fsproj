@@ -5,6 +5,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="FsUnit.Xunit.fs"/>
+    <Compile Include="CommonUtils.fs"/>
     <Compile Include="DomainSpecs.fs"/>
     <Compile Include="DependencyResolutionSpecs.fs"/>
   </ItemGroup>

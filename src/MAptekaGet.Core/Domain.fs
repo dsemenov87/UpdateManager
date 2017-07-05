@@ -68,9 +68,12 @@ module Domain =
 
   type UpdateName =
     | UpdateName of string
+    | MApteka
 
     override this.ToString() =
-      let (UpdateName name) = this in name
+      match this with
+      | UpdateName name -> name
+      | MApteka         -> "MApteka"
   
   type Constraint =
     | Dependency  of UpdateName * VDisjunction
@@ -201,7 +204,7 @@ module Domain =
       
       let toUpdateName = List.toArray
                       >> String
-                      >> UpdateName
+                      >> (function "MApteka" -> MApteka | n -> UpdateName n)
       
       many letter <?> "update name" |>> toUpdateName
     
@@ -222,25 +225,19 @@ module Domain =
 
   /// All possible things that can happen in the use-cases
   type Message =
-    | PublishMessage of PublishMessage
+    | CheckMessage    of CheckMessage
+    | PublishMessage  of CheckMessage
 
-  and PublishMessage =
+  and CheckMessage =
     | BadUpdateFormat   of string
-    | BadConstraint     of string // maybe include in BadUpdateFormat?
     | AlreadyPublished  of Update * Version
     | VersionUnexpected of Update * Version
-    // todo | CausesCyclicDependency of Update * Version
-    | ResolutionMessage of ResolutionResult
-
-  and ResolutionResult = Result<Activation, ResolutionFailure>
+    | ResolutionMessage of ResolutionMessage
   
-  and ResolutionFailure =
+  and ResolutionMessage =
     | UpdateNotFound          of Activation * UpdateName * suggestions:UpdateName list
     | MissingUpdateVersion    of Activation list
     | IncompatibleConstraints of Activation * Activation
+    // todo | CausesCyclicDependency of Update * Version
+    | ResolutionSuccess       of Activation list
     
-  // type UpdateProgram =
-  //   | Publish of  name:UpdateName
-  //             *   version:Version
-  //             *   constraints:Constraint list
-  //             *

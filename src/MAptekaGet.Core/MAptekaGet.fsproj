@@ -9,6 +9,7 @@
     <Compile Include="Domain.fs"/>
     <Compile Include="DependencyResolution.fs"/>
     <Compile Include="Reporting.fs"/>
+    <Compile Include="PublicApi.fs"/>
     <Compile Include="Program.fs"/>
   </ItemGroup>
   <ItemGroup>
