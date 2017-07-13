@@ -155,7 +155,7 @@ module DependencyResolution =
       | None -> // consistant and complete -> solution
           acts
           |> List.filter (function InitialA _ -> true | _ -> false)
-          |> ResolutionSuccess
+          |> Solution
 
       | Some (Primary _ as conf) ->
           match primaryConflicts with

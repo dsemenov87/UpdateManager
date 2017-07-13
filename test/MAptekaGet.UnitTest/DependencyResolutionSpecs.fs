@@ -10,14 +10,14 @@ module NEL = NonEmptyList
 
 [<Fact>]
 let ``can check if dependency version is missing`` () =
-  let ``1.0.5 <= http_client <= 1.0.5`` =
+  let ``http_client = 1.0.5`` =
     dep "http_client: 1.0.5 <= v <= 1.0.5"
 
   let ``ws_client-1.0.0`` =
-    upd "ws_client-1.0.0" |> addConstraint ``1.0.5 <= http_client <= 1.0.5`` 
+    upd "ws_client-1.0.0" |> addConstraint ``http_client = 1.0.5`` 
 
   let childA x =
-    ChildA (x, ``1.0.5 <= http_client <= 1.0.5``, InitialA ``ws_client-1.0.0``)
+    ChildA (x, ``http_client = 1.0.5``, InitialA ``ws_client-1.0.0``)
   
   let lookupSet =
     [ ``ws_client-1.0.0``

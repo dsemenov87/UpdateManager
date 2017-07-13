@@ -1,0 +1,24 @@
+﻿<Project Sdk="FSharp.NET.Sdk;Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="Utils.fs" />
+    <Compile Include="Domain.fs" />
+    <Compile Include="DataAccess.fs" />
+    <Compile Include="DependencyResolution.fs" />
+    <Compile Include="UpdateManager.fs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="FParsec" Version="1.0.3-beta-20170521" />
+    <PackageReference Include="FSharp.Core" Version="4.2.1" />
+    <PackageReference Include="FSharp.NET.Sdk" Version="1.0.5" PrivateAssets="All" />
+    <PackageReference Include="Microsoft.AspNetCore.Routing" Version="2.0.0-preview2-final" />
+    <PackageReference Include="Microsoft.AspNetCore.Server.Kestrel" Version="2.0.0-preview2-final" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="2.0.0-preview2-final" />
+  </ItemGroup>
+
+</Project>
