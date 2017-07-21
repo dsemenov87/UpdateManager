@@ -106,14 +106,18 @@ module DependencyResolution =
       | []    -> NEL.create root []
       | x::xs -> NEL.create x xs
 
+  let private dependencyNames =
+    List.collect (fun upd -> upd.Constraints)
+    >> List.map (fun (Dependency (updateName, dependencyConstraint)) -> updateName)
+  
   /// add the number of updates that are missing for a state to become complete as our distance measure.
   let private distance ((_,acts): State) =
     let updates =
       List.map activationUpdate acts
     in
       updates
-      |> List.collect (fun upd -> upd.Constraints)
-      |> List.filter (fun (Dependency (updateName, dependencyConstraint)) ->
+      |> dependencyNames
+      |> List.filter (fun updateName ->
         updates
         |> List.exists (fun upd -> upd.Name = updateName)
         |> not
@@ -136,25 +140,48 @@ module DependencyResolution =
       match inputs with
       | [] ->
           // printfn "loop: [] -> %A" primaryConflicts;
-          MissingUpdateVersion (List.sortBy activationUpdate primaryConflicts)
+          MissingUpdateVersion (primaryConflicts |> List.minBy activationUpdate) // todo safe
       
-      | ((((act,acts), inconsistencyError), levelOfIncompletition)::remains) ->
+      | (((act,acts), inconsistencyError), levelOfIncompletition)::remains ->
           // printfn "loop: x::xs -> err: %A, level: %A" inconsistencyError levelOfIncompletition;
           step act acts primaryConflicts inconsistencyError levelOfIncompletition remains
 
     and step act acts primaryConflicts inconsistencyError levelOfIncompletition remains =
       match inconsistencyError with
-      | None when levelOfIncompletition > 0 -> // consistant but not complete -> constraint update is not found 
+      | None when levelOfIncompletition > 0 -> // consistant but not complete -> constraint update is not found      
+          let rec findNotFounded shift act =
+            let upd = activationUpdate act
+            match upd.Constraints |> List.tryItem shift with
+            | None ->
+                activationParent act |> Option.bind (findNotFounded (shift + 1))
+            | Some (Dependency (constrUpdName,_)) ->
+                Some constrUpdName
+
           let suggestions =
             nearbyNames (activationUpdate act).Name allUpdates
-          match stateConstraints (act, acts) with
-          | [] -> failwith "stateConstraints can't be empty when levelOfIncompletition > 0."
-          | (_,(Dependency (constrUpdName,_)))::_ ->
-              UpdateNotFound (act, constrUpdName, Seq.toList suggestions)
+          
+          match findNotFounded 0 act with
+          | None ->
+              failwith "findNotFounded can't be None when levelOfIncompletition > 0."
+          | Some constrUpdName ->
+              UpdateNotFound (constrUpdName, Seq.toList suggestions)
             
       | None -> // consistant and complete -> solution
+          let upds =
+            List.map activationUpdate acts
+          
+          let rec updateTree upd =
+            let childs =
+              upd.Constraints
+              |> List.collect (fun (Dependency (dn,_)) ->
+                List.filter (fun u -> u.Name = dn) upds
+              )
+            in
+              Node (upd, Seq.map updateTree childs)
+
           acts
           |> List.filter (function InitialA _ -> true | _ -> false)
+          |> List.map (updateTree << activationUpdate)
           |> Solution
 
       | Some (Primary _ as conf) ->
@@ -166,7 +193,7 @@ module DependencyResolution =
               // printfn "step: Some (Primary _ as conf) -> primaryConflicts: same: %b" ((activationParent confAct) = (activationParent act));
               if (activationParent confAct) = (activationParent act)
                 then loop (act::confAct::cas) allUpdates remains
-                else MissingUpdateVersion (confAct::cas)
+                else MissingUpdateVersion confAct
       | Some (Secondary (act1, act2)) ->
           // printfn "step: Some (Secondary (act1, act2)) -> %O\n%O" (activationUpdate act1) (activationUpdate act2);
           IncompatibleConstraints (act1, act2)

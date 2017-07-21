@@ -4,7 +4,7 @@ namespace MAptekaGet
 
 [<AutoOpen>]
 module Utils =
-  let inline show x = x.ToString()
+  // let show = string // use string instead
   let inline cons head tail = head::tail
 
   let inline words (text: string) = text.Split [|' '; '\n'|] |> Array.toList
@@ -56,7 +56,7 @@ module Utils =
         | Some h -> create h (s |> Seq.skip 1 |> Seq.toList)
         | None   -> nel
       )
-  
+
   /// Lazy tree
   type Tree<'a> =
     | Node of 'a * Tree<'a> seq 
@@ -102,6 +102,14 @@ module Utils =
                         | Ok x      -> Ok (NonEmptyList.singleton x)
       | Ok (x::xs)  -> Ok (NonEmptyList.create x xs)
 
+    let fromChoice = function
+      | Choice1Of2 x -> Ok x
+      | Choice2Of2 y -> Error y
+
+    let fromOption err = function
+      | None    -> Error err
+      | Some r  -> Ok r 
+
   module ResultOp =
     open ResultExt
 
@@ -118,6 +126,8 @@ module Utils =
     let ( <*> ) = apply
     /// pipeline version of apply
     let ( <|*> ) fP xP = apply xP fP
+
+    let (>=>) f g x = (f x) >>= g 
   
   module Parsing =
     open FParsec
@@ -431,7 +441,32 @@ module Utils =
       let println maxCols doc =
         outputWithFun System.Console.Write maxCols doc
         System.Console.Write "\n"
-  
+
+    module Json =
+      open System.Json
+      
+      let private prettySeq (l, r) toDoc xs =
+        if Seq.isEmpty xs
+        then l <^> r
+        else let ds = xs |> Seq.map toDoc |> punctuate comma |> vsep
+             l <..> ds |> nest 2 <..> r |> group
+
+      let rec pretty (json: JsonValue) =
+        match json with
+         | :? JsonObject as json ->
+           json
+           |> prettySeq lrbrace ^ fun kv ->
+                pretty ^ JsonPrimitive kv.Key <^> colon <+> pretty kv.Value
+         | :? JsonArray as json ->
+           json
+           |> prettySeq lrbracket pretty
+         | null ->
+           txt "null"
+         | _ ->
+           json
+           |> string
+           |> txt
+
   [<RequireQualifiedAccess>]
   module Reporting =
     open PrettyPrint
@@ -458,6 +493,9 @@ module Utils =
         with get () =
           Message.New "" [] MessageMode.Error
 
+      static member Error (err: string) =
+          Message.New "" [txt err] MessageMode.Error
+
     type IToReportMessage =
       abstract member ToReportMessage: unit -> Message
 
@@ -483,14 +521,14 @@ module Utils =
           List.fold verticalAppend doc docs
      
     let private start mode : Doc =
-      softbreak <^> (mode |> show |> txt) <^> txt ":"
+      softbreak <^> (mode |> string |> txt) <^> txt ":"
 
     let private pmsgToDoc (pmsg: Message) : Doc =
       let {Summary=summary;Details=details;Mode=mode} = pmsg
       let summaryDoc =
         fillSep (start mode :: (summary |> words |> List.map txt))
       in
-        stack (summaryDoc :: details)
+        stack (summaryDoc :: (details |> List.map (indent 4)))
         <^> line
         <^> line
 

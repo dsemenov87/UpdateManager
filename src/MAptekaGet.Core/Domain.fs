@@ -5,6 +5,9 @@ namespace MAptekaGet
 [<AutoOpen>]
 module Domain =  
   open System
+  open System.Json
+  open System.Collections.Generic
+  
   module NEL = NonEmptyList
   
   /// Semantic Version implementation
@@ -88,12 +91,12 @@ module Domain =
       match this with
       | Dependency (name, version) -> sprintf "%O: %O" name version
   
-  type UpdateSource =
-    | Uri of Uri
+  type EscSource =
+    | UriSource of Uri
 
     override this.ToString() =
       match this with
-      | Uri uri -> uri.ToString()
+      | UriSource uri -> uri.ToString()
   
   [<CustomEquality; CustomComparison>]
   type Update =
@@ -140,11 +143,11 @@ module Domain =
   /// bytes
   [<Measure>] type B
   
-  type UpdateFileInfo =
-    { Source      : UpdateSource
+  type EscFileInfo =
+    { Source      : EscSource
       Md5Hash     : string
       Size        : int<B>
-    }
+    } 
 
   type Activation =
     | InitialA  of Update
@@ -214,7 +217,7 @@ module Domain =
       many letter <?> "update name" |>> toUpdateName
     
     let update =
-      updateName .>> pchar '-' .>>. version .>> spaces
+      updateName .>> pchar '-' .>>. version .>> spaces .>> eof
       |>> (fun (name, vers) -> {Name = name; Version = vers; Constraints = []})
 
     let dependency = updateName
@@ -238,31 +241,37 @@ module Domain =
     | Unexpected        of Update * Version
 
   type ResolutionResult =
-    | UpdateNotFound          of Activation * UpdateName * suggestions:UpdateName list
-    | MissingUpdateVersion    of Activation list
+    | UpdateNotFound          of UpdateName * suggestions:UpdateName list
+    | MissingUpdateVersion    of Activation
     | IncompatibleConstraints of Activation * Activation
     // todo | CausesCyclicDependency of Update * Version
-    | Solution                of Activation list
+    | Solution                of Tree<Update> list
 
-  type UpdateInfo = Update * UpdateSpecs * UpdateFileInfo
+  type UpdateInfo = Update * UpdateSpecs
+
+  type CustomerId = string 
 
   /// Represents each instruction
   type UpdaterInstruction<'next> = 
-    | ValidateInput       of IO.Stream              * (Update * UpdateSpecs -> 'next)
-    | CheckVersion        of (Update * UpdateSpecs) * (Update * UpdateSpecs-> 'next)
-    | ResolveDependencies of Update list            * (Activation list -> 'next)
-    | Publish             of UpdateInfo             * (Update -> 'next)
-    | Install             of                        'next
+    | ValidateInput       of                        (UpdateInfo list -> 'next)
+    | CheckVersion        of UpdateInfo list      * (UpdateInfo list -> 'next)
+    | ResolveDependencies of Update list          * (Tree<Update> list -> 'next)
+    | Publish             of UpdateInfo list      * (Update list -> 'next)
+    | GetAvailableUpdates of                        (Update list -> 'next)
+    | ConvertToEsc        of Update list          * (EscFileInfo list -> 'next)
+    | PrepareToInstall    of Update list          * (Update list -> 'next)
     | Info                of                        'next
 
   let private mapInstruction f inst  = 
     match inst with
-    | ValidateInput (input, next)       -> ValidateInput (input, next >> f)
-    | CheckVersion (input, next)        -> CheckVersion (input, next >> f)
-    | ResolveDependencies (upds, next)  -> ResolveDependencies (upds, next >> f) 
-    | Publish (upd, next)               -> Publish (upd, next >> f)  
-    | Install next
-    | Info next                         -> failwith "not implemented yet"
+    | ValidateInput next                    -> ValidateInput (next >> f)
+    | CheckVersion (input, next)            -> CheckVersion (input, next >> f)
+    | ResolveDependencies (upds, next)      -> ResolveDependencies (upds, next >> f) 
+    | Publish (ui, next)                    -> Publish (ui, next >> f)
+    | GetAvailableUpdates next              -> GetAvailableUpdates (next >> f) 
+    | ConvertToEsc (upds, next)             -> ConvertToEsc (upds, next >> f)
+    | PrepareToInstall (upds, next)         -> PrepareToInstall (upds, next >> f)
+    | Info next                             -> failwith "not implemented yet"
       
   /// Represent the Updater Program
   type UpdaterProgram<'a> = 
@@ -275,8 +284,8 @@ module Domain =
       | KeepGoing instruction -> KeepGoing (mapInstruction (bind f) instruction)
       | Stop x                -> f x
 
-    let validateInput input =
-      KeepGoing (ValidateInput (input, Stop))
+    let validateInput =
+      KeepGoing (ValidateInput (Stop))
 
     let checkVersion input =
       KeepGoing (CheckVersion (input, Stop))
@@ -284,16 +293,27 @@ module Domain =
     let resolveDependencies input =
       KeepGoing (ResolveDependencies (input, Stop))
 
-    let publish ufi (upd, updspecs) =
-      KeepGoing (Publish ((upd, updspecs, ufi), Stop))
+    let publish uis =
+      KeepGoing (Publish (uis, Stop))
+     
+    let convertToEsc upds =
+      KeepGoing (ConvertToEsc (upds, Stop))
+
+    let prepareToInstall upds =
+      KeepGoing (PrepareToInstall (upds, Stop))
+
+    let availableUpdates =
+      KeepGoing (GetAvailableUpdates (Stop))
 
   module Reporting =
     open PrettyPrint
     module Rep = Utils.Reporting
 
+    let inline showNode x =
+        sprintf "%O => %O" x
+    
     let rec internal treeFromActivation (act: Activation) =
-      let showNode =
-        sprintf "%O => %O"
+      
       let rec showUpToRoot constr act =
         seq {
           match act with
@@ -305,65 +325,60 @@ module Domain =
         }
       in
         match act with
-        | InitialA upd -> NEL.singleton (show upd)
+        | InitialA upd -> NEL.singleton (string upd)
         | ChildA (upd, lastConstr, constrAct) ->
-            NEL.create (show upd) (Seq.toList (showUpToRoot lastConstr constrAct))
+            NEL.create (string upd) (Seq.toList (showUpToRoot lastConstr constrAct))
             |> NEL.reverse
         |> Tree.fromNonEmptyList
 
     let internal resolutionToMsg (res: ResolutionResult) =
       match res with
-      | Solution acts ->
+      | Solution forest ->
           Rep.Message.New
-            ( "The following updates can be published."
+            ( "The update dependencies:"
             )
-            [ List.map (txt << show << activationUpdate) acts |> vcat |> indent 4  ]
+            ( forest |> List.map (Tree.map string >> Rep.drawTree))
             Rep.Success
 
-      | UpdateNotFound (_, updName, suggestions) ->
+      | UpdateNotFound (updName, suggestions) ->
           Rep.Message.New
-            ( "Could not find any updates named '" + updName.ToString() + "'."
+            ( "Could not find any update named '" + updName.ToString() + "'. Maybe you want one of those?"
             )
-            [ txt "Here are some updates that have similar names:"
-              List.map (txt << show) suggestions |> vcat |> indent 4
-              txt "Maybe you want one of those?"
+            [ List.map (txt << string) suggestions |> vcat
             ]
             Rep.Error
 
       | IncompatibleConstraints (act1, act2) ->
           Rep.Message.New
-            ( "There was a conflict for update version.")
-            [ Rep.drawTree (treeFromActivation act1) |> indent 4
-              Rep.drawTree (treeFromActivation act2) |> indent 4
+            ( "There was a conflict for update version:")
+            [ Rep.drawTree (treeFromActivation act1)
+              Rep.drawTree (treeFromActivation act2) 
             ]
             Rep.Error
 
 
-      | MissingUpdateVersion acts ->
+      | MissingUpdateVersion act ->
           let docTree, update =
-            match acts with
-            | [] -> Doc.Empty, "<not resolved>"
-            | act::_ ->
-                let update = (activationUpdate act).ToString()
-                match (activationParent act) with
-                | None -> txt update, update 
-                | Some parentAct ->
-                    let tree =
-                      Node (parentAct, acts |> Seq.map Tree.singleton)
-                      |> Tree.map (fun node -> (activationUpdate node).ToString())
-                    in
-                      Rep.drawTree tree, update
+            let update = act |> activationUpdate |> string
+            match act with
+            | InitialA _ -> txt update, update 
+            | ChildA (_, constr, parentAct) ->
+                let tree =
+                  Node (showNode (activationUpdate parentAct) constr, seq [update |> string |> Tree.singleton])
+                  // |> Tree.map (activationUpdate >> string)
+                in
+                  Rep.drawTree tree, update
 
           Rep.Message.New
-            ( "Cannot resolve dependencies. Missing update version '" + update + "'."
+            ( "Cannot resolve dependencies. Missing update version."
             )
-            [ docTree |> indent 4 ]
+            [ docTree ]
             Rep.Error
 
     let internal validationToMsg (res: ValidationResult) =
       match res with
       | Valid (upd,_) ->
-          Rep.Message.New ("The update name '" + (show upd) + "' is valid.") [] Rep.Success
+          Rep.Message.New ("The update name '" + (string upd) + "' is valid.") [] Rep.Success
       | Invalid problem ->
           Rep.Message.New "The update name is invalid." [ txt problem ] Rep.Error
 
@@ -371,14 +386,14 @@ module Domain =
       match res with
       | CorrectVersion (upd,_) ->
           Rep.Message.New
-            ( "Update version '" + (show upd) + "' is good."
+            ( "Update version '" + (string upd) + "' is good."
             )
             []
             Rep.Success         
       
       | AlreadyPublished (upd) ->
           Rep.Message.New
-            ( "Update '" + (show upd) + "' has already been published. You cannot publish it again!."
+            ( "Update '" + (string upd) + "' has already been published. You cannot publish it again!"
             )
             []
             Rep.Error
@@ -386,12 +401,19 @@ module Domain =
       | Unexpected (upd, version) ->
           Rep.Message.New
             ( "You cannot publish a package with an unexpected version.\n" +
-              "The next version should be greater then '" + (show version) + "'."
+              "The next version should be greater then '" + (string version) + "'."
             )
             []
             Rep.Error
     
- 
+    let internal escFileInfoToMsg (efi: EscFileInfo) =
+      JsonObject (
+        KeyValuePair("Name", JsonPrimitive("blabla") :> JsonValue),
+        KeyValuePair("Url", JsonPrimitive(string efi.Source) :> JsonValue),
+        KeyValuePair("Hash", JsonPrimitive(efi.Md5Hash) :> JsonValue),
+        KeyValuePair("Size", JsonPrimitive(string efi.Size) :> JsonValue)
+      )
+      
   module Operations =
     let inline (>>=) x f = UpdaterProgram.bind f x 
  
