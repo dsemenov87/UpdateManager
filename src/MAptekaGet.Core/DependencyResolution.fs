@@ -15,10 +15,10 @@ module DependencyResolution =
     //  dependency constraint
     | Secondary of Activation * Activation
 
-  let private candidateTree (initials: NEL<Update>) (allVersions: Update list) : Tree<State> =
+  let private candidateTree (initials: NEL<Update>) (allVersions: Update Set) : Tree<State> =
     let versionsOf updName =
       allVersions
-      |> Seq.filter (fun v -> v.Name = updName)
+      |> Set.filter (fun v -> v.Name = updName)
       |> Seq.sortBy (fun v -> v.Version)
       |> Seq.rev // newest is always better
     
@@ -124,16 +124,16 @@ module DependencyResolution =
       )
       |> List.length
   
-  let private nearbyNames (target: UpdateName) (allUpdates: Update list) : UpdateName seq =
+  let private nearbyNames (target: UpdateName) (allUpdates: Update Set) : UpdateName seq =
     allUpdates
-    |> Seq.map (fun upd -> (target <--> upd.Name, upd.Name))
+    |> Set.map (fun upd -> (target <--> upd.Name, upd.Name))
     |> Seq.sortBy fst
     |> Seq.map snd
     |> Seq.distinct
     |> Seq.truncate 4
   
   let private aggregateToResult
-    (allUpdates: Update list)
+    (allUpdates: Update Set)
     (inputList: NEL<(State * Conflict option) * int>) =
 
     let rec loop primaryConflicts allUpdates inputs =
@@ -202,12 +202,14 @@ module DependencyResolution =
     in
       step act acts [] inconsistencyError levelOfIncompletition remains
 
-  let resolve (allUpdates: Update list) (initials: NEL<Update>) =
-    candidateTree initials allUpdates
-    |> Tree.map labelInconsistent
-    |> pruneTree (Option.isSome << snd)
-    |> leaves
-    |> NEL.map (fun ((s,_) as i) -> (i, distance s))
-    |> NEL.sortBy snd
-    |> aggregateToResult allUpdates
+  let resolve (allUpdates: Update seq) (initials: NEL<Update>) =
+    let lookupSet = Set.ofSeq allUpdates
+    in
+      candidateTree initials lookupSet
+      |> Tree.map labelInconsistent
+      |> pruneTree (Option.isSome << snd)
+      |> leaves
+      |> NEL.map (fun ((s,_) as i) -> (i, distance s))
+      |> NEL.sortBy snd
+      |> aggregateToResult lookupSet
       

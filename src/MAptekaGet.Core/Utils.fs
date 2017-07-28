@@ -8,6 +8,7 @@ module Utils =
   let inline cons head tail = head::tail
 
   let inline words (text: string) = text.Split [|' '; '\n'|] |> Array.toList
+  let inline lines (text: string) = text.Split [|'\r'; '\n'|] |> Array.toList
 
   let inline (^) x = x
 
@@ -59,7 +60,9 @@ module Utils =
 
   /// Lazy tree
   type Tree<'a> =
-    | Node of 'a * Tree<'a> seq 
+    | Node of 'a * Tree<'a> seq
+
+  type Forest<'a> = Tree<'a> seq
   
   [<RequireQualifiedAccess>]
   module Tree =
@@ -77,7 +80,7 @@ module Utils =
       Node (x, fromList xs)
 
 
-  module ResultExt =
+  module Result =
     /// apply a wrapped function to a wrapped value
     let apply fP xP = Result.bind (fun f -> Result.bind (Ok << f) xP ) fP 
 
@@ -102,16 +105,20 @@ module Utils =
                         | Ok x      -> Ok (NonEmptyList.singleton x)
       | Ok (x::xs)  -> Ok (NonEmptyList.create x xs)
 
-    let fromChoice = function
+    let ofChoice = function
       | Choice1Of2 x -> Ok x
       | Choice2Of2 y -> Error y
 
-    let fromOption err = function
+    let toChoice = function
+      | Ok x    -> Choice1Of2 x 
+      | Error y -> Choice2Of2 y 
+
+    let ofOption err = function
       | None    -> Error err
       | Some r  -> Ok r 
 
   module ResultOp =
-    open ResultExt
+    open Result
 
     /// Infix version of Result.bind
     let inline (>>=) x f = Result.bind f x
@@ -128,6 +135,13 @@ module Utils =
     let ( <|*> ) fP xP = apply xP fP
 
     let (>=>) f g x = (f x) >>= g 
+  
+  module Choice =
+    let rec sequence choices =
+      let consC = Choice.lift2 cons
+      match choices with
+      | []         -> Choice1Of2 []
+      | head::tail -> consC head (sequence tail)
   
   module Parsing =
     open FParsec
@@ -443,7 +457,7 @@ module Utils =
         System.Console.Write "\n"
 
     module Json =
-      open System.Json
+      open Chiron
       
       let private prettySeq (l, r) toDoc xs =
         if Seq.isEmpty xs
@@ -451,50 +465,36 @@ module Utils =
         else let ds = xs |> Seq.map toDoc |> punctuate comma |> vsep
              l <..> ds |> nest 2 <..> r |> group
 
-      let rec pretty (json: JsonValue) =
+      let rec pretty (json: Json) =
         match json with
-         | :? JsonObject as json ->
-           json
-           |> prettySeq lrbrace ^ fun kv ->
-                pretty ^ JsonPrimitive kv.Key <^> colon <+> pretty kv.Value
-         | :? JsonArray as json ->
-           json
-           |> prettySeq lrbracket pretty
-         | null ->
-           txt "null"
-         | _ ->
-           json
-           |> string
-           |> txt
+        | Object jobj ->
+         jobj
+         |> JsonObject.toMap
+         |> prettySeq lrbrace ^ fun kv ->
+              pretty ^ Json.String kv.Key <^> colon <+> pretty kv.Value
+
+        | Array jsons ->
+         prettySeq lrbracket pretty jsons
+
+        | _ -> json |> string |> txt
 
   [<RequireQualifiedAccess>]
   module Reporting =
     open PrettyPrint
 
-    type MessageMode =
-      | Success
-      | Error
-      
-      override this.ToString () =
-        match this with
-        | Success  -> "Success"
-        | Error    -> "Error"
+    let inline showNode x y = sprintf "%O => %O" x y
 
     type Message =
       { Summary : string
-        Mode    : MessageMode
         Details : Doc list
       }
 
-      static member New (s: string) = fun d m ->
-        { Summary = s; Details = d; Mode = m }
+      static member New (s: string) = fun d ->
+        { Summary = s; Details = d }
 
       static member Zero
         with get () =
-          Message.New "" [] MessageMode.Error
-
-      static member Error (err: string) =
-          Message.New "" [txt err] MessageMode.Error
+          Message.New "" []
 
     type IToReportMessage =
       abstract member ToReportMessage: unit -> Message
@@ -523,14 +523,27 @@ module Utils =
     let private start mode : Doc =
       softbreak <^> (mode |> string |> txt) <^> txt ":"
 
-    let private pmsgToDoc (pmsg: Message) : Doc =
-      let {Summary=summary;Details=details;Mode=mode} = pmsg
-      let summaryDoc =
-        fillSep (start mode :: (summary |> words |> List.map txt))
-      in
-        stack (summaryDoc :: (details |> List.map (indent 4)))
+    let internal pmsgToDoc (pmsg: Message) : Doc =
+      let {Summary=summary;Details=details} = pmsg
+      let allDocs =
+        if System.String.IsNullOrWhiteSpace summary then
+          details
+        else
+          let summaryDoc =
+            fillSep (summary |> words |> List.map txt)
+          in
+            summaryDoc :: (details |> List.map (indent 4))
+      in  
+        stack allDocs
         <^> line
         <^> line
+
+    let inline resultToMsg res =
+      match res with
+      | Result.Ok res ->
+          Message.New "Success:" [res |> string |> txt]
+      | Result.Error err ->
+          Message.New "Failure:" [err |> string |> txt]
 
     type Message with
       override x.ToString() =

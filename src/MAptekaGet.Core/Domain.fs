@@ -5,10 +5,10 @@ namespace MAptekaGet
 [<AutoOpen>]
 module Domain =  
   open System
-  open System.Json
   open System.Collections.Generic
   
   module NEL = NonEmptyList
+  module Rep = Utils.Reporting
   
   /// Semantic Version implementation
   [<CustomEquality; CustomComparison>]
@@ -91,13 +91,6 @@ module Domain =
       match this with
       | Dependency (name, version) -> sprintf "%O: %O" name version
   
-  type EscSource =
-    | UriSource of Uri
-
-    override this.ToString() =
-      match this with
-      | UriSource uri -> uri.ToString()
-  
   [<CustomEquality; CustomComparison>]
   type Update =
     { Name        : UpdateName 
@@ -129,6 +122,8 @@ module Domain =
         | _ ->
           invalidArg "yobj" "cannot compare values of different types"
 
+  let updName {Name=name} = name 
+  
   let addConstraint (constr: Constraint) (upd: Update) =
     { upd with Constraints = constr :: upd.Constraints }
 
@@ -139,15 +134,6 @@ module Domain =
       ReleaseNotes: string
       Created     : DateTime
     }
-
-  /// bytes
-  [<Measure>] type B
-  
-  type EscFileInfo =
-    { Source      : EscSource
-      Md5Hash     : string
-      Size        : int<B>
-    } 
 
   type Activation =
     | InitialA  of Update
@@ -231,61 +217,106 @@ module Domain =
     let dependencies =
       sepBy1 dependency rf
    
-  type ValidationResult =
-    | Valid   of Update * UpdateSpecs
-    | Invalid of string
-    
+
   type VersionCheckResult =
-    | CorrectVersion    of Update * UpdateSpecs
+    | CorrectVersion    of Update
     | AlreadyPublished  of Update
-    | Unexpected        of Update * Version
+    | UnexpectedVersion of Update * Version
 
   type ResolutionResult =
     | UpdateNotFound          of UpdateName * suggestions:UpdateName list
     | MissingUpdateVersion    of Activation
     | IncompatibleConstraints of Activation * Activation
-    // todo | CausesCyclicDependency of Update * Version
     | Solution                of Tree<Update> list
+
+  type PublishResult =
+    | Published       of Update
+    | MissingFileBody of Update
+
+  type Md5Sum = string
+
+  type EscFileInfo = Uri * Md5Sum
+
+  type AvailableResponse =
+    | ListAvailable of EscFileInfo list
+    | EscNotFound   of Update
+
+  type ConvertToEscResult =
+    | Converted                 of Update * EscFileInfo
+    | ConvertionSourceNotFound  of Update
 
   type UpdateInfo = Update * UpdateSpecs
 
-  type CustomerId = string 
+  type CustomerId = string
+
+  type User =
+    | Issuer of CustomerId
+
+  type DomainMessage =
+    | Never
+    | ValidationMessage     of Result<Update, string>
+    | VersionCheckMessage   of VersionCheckResult
+    | ResolutionMessage     of ResolutionResult
+    | AvailableMessage      of AvailableResponse
+    | ConvertToEscMessage   of ConvertToEscResult
+    | PublishMessage        of PublishResult
+    | UnexpectedError       of string
 
   /// Represents each instruction
-  type UpdaterInstruction<'next> = 
-    | ValidateInput       of                        (UpdateInfo list -> 'next)
-    | CheckVersion        of UpdateInfo list      * (UpdateInfo list -> 'next)
-    | ResolveDependencies of Update list          * (Tree<Update> list -> 'next)
-    | Publish             of UpdateInfo list      * (Update list -> 'next)
-    | GetAvailableUpdates of                        (Update list -> 'next)
-    | ConvertToEsc        of Update list          * (EscFileInfo list -> 'next)
-    | PrepareToInstall    of Update list          * (Update list -> 'next)
-    | Info                of                        'next
+  type UpdaterInstruction<'next> =
+    | Authorize           of                (User -> 'next)
+    | ValidateUpdate      of                (Update -> 'next)
+    | ReadSpecs           of                (UpdateSpecs -> 'next)
+    | ReadUser            of                (CustomerId -> 'next)
+    | CheckVersion        of Update       * (Update -> 'next)
+    | ResolveDependencies of Update Set   * (Tree<Update> list -> 'next)
+    | Publish             of UpdateInfo   * (UpdateInfo -> 'next)
+    | GetAvailableUpdates of User         * (EscFileInfo list  -> 'next)
+    | ConvertToEsc        of CustomerId * Update Set
+                                          * (EscFileInfo list -> 'next)
+    | PrepareToInstall    of CustomerId * Update Set
+                                          * 'next
 
   let private mapInstruction f inst  = 
     match inst with
-    | ValidateInput next                    -> ValidateInput (next >> f)
-    | CheckVersion (input, next)            -> CheckVersion (input, next >> f)
-    | ResolveDependencies (upds, next)      -> ResolveDependencies (upds, next >> f) 
-    | Publish (ui, next)                    -> Publish (ui, next >> f)
-    | GetAvailableUpdates next              -> GetAvailableUpdates (next >> f) 
-    | ConvertToEsc (upds, next)             -> ConvertToEsc (upds, next >> f)
-    | PrepareToInstall (upds, next)         -> PrepareToInstall (upds, next >> f)
-    | Info next                             -> failwith "not implemented yet"
+    | Authorize next                      -> Authorize (next >> f)
+    | ValidateUpdate next                 -> ValidateUpdate (next >> f)
+    | ReadSpecs next                      -> ReadSpecs (next >> f)
+    | ReadUser next                       -> ReadUser (next >> f)
+    | CheckVersion (input, next)          -> CheckVersion (input, next >> f)
+    | ResolveDependencies (upds, next)    -> ResolveDependencies (upds, next >> f) 
+    | Publish (ui, next)                  -> Publish (ui, next >> f)
+    | ConvertToEsc (cid, upds, next)      -> ConvertToEsc (cid, upds, next >> f)
+    | PrepareToInstall (cid, upds, next)  -> PrepareToInstall (cid, upds, next |> f)
+    | GetAvailableUpdates (user, next)    -> GetAvailableUpdates (user, next >> f) 
       
   /// Represent the Updater Program
   type UpdaterProgram<'a> = 
-    | Stop of 'a
+    | Stop      of 'a
     | KeepGoing of UpdaterInstruction<UpdaterProgram<'a>>
+    | OrElse    of UpdaterProgram<'a> * UpdaterProgram<'a>
 
   [<RequireQualifiedAccess>]
   module UpdaterProgram =
     let rec bind f = function 
       | KeepGoing instruction -> KeepGoing (mapInstruction (bind f) instruction)
       | Stop x                -> f x
+      | OrElse (p1, p2)       -> OrElse (bind f p1, bind f p2)           
 
-    let validateInput =
-      KeepGoing (ValidateInput (Stop))
+    let inline orElse p1 p2 = OrElse (p1, p2)
+    let inline choice progs = Seq.reduce orElse progs 
+
+    let authorize =
+      KeepGoing (Authorize (Stop))
+    
+    let readSpecs =
+      KeepGoing (ReadSpecs (Stop))
+
+    let readUser =
+      KeepGoing (ReadUser (Stop))      
+
+    let validateUpdate =
+      KeepGoing (ValidateUpdate (Stop))    
 
     let checkVersion input =
       KeepGoing (CheckVersion (input, Stop))
@@ -296,21 +327,35 @@ module Domain =
     let publish uis =
       KeepGoing (Publish (uis, Stop))
      
-    let convertToEsc upds =
-      KeepGoing (ConvertToEsc (upds, Stop))
+    let convertToEsc cid upds =
+      KeepGoing (ConvertToEsc (cid, upds, Stop))
 
-    let prepareToInstall upds =
-      KeepGoing (PrepareToInstall (upds, Stop))
+    let prepareToInstall cid upds =
+      KeepGoing (PrepareToInstall (cid, upds, Stop ()))
 
-    let availableUpdates =
-      KeepGoing (GetAvailableUpdates (Stop))
+    let availableUpdates cid =
+      KeepGoing (GetAvailableUpdates (cid, Stop))
 
-  module Reporting =
+  module internal Json =
+    open Chiron
+    
+    let escFileInfoToJson ((uri, md5): EscFileInfo) =
+      [ ("Url", string uri)
+        ("Hash", md5)
+      ]
+      |> Map.ofList
+      |> JsonObject.ofMapWith Json.String
+      |> Object
+
+    let jsonMessagesToSingleJson jmsgs =
+      ["data", Json.Array jmsgs]
+      |> Map.ofList
+      |> JsonObject.ofMap |> Object
+  
+  [<AutoOpen>]
+  module internal Printing =
     open PrettyPrint
-    module Rep = Utils.Reporting
-
-    let inline showNode x =
-        sprintf "%O => %O" x
+    open Chiron
     
     let rec internal treeFromActivation (act: Activation) =
       
@@ -318,9 +363,9 @@ module Domain =
         seq {
           match act with
           | InitialA upd ->
-              yield showNode upd constr
+              yield Rep.showNode upd constr
           | ChildA (upd, nextConstr, constrAct) ->
-              yield showNode upd constr
+              yield Rep.showNode upd constr
               yield! showUpToRoot nextConstr constrAct
         }
       in
@@ -331,22 +376,50 @@ module Domain =
             |> NEL.reverse
         |> Tree.fromNonEmptyList
 
-    let internal resolutionToMsg (res: ResolutionResult) =
-      match res with
-      | Solution forest ->
+    let publishResultToPrintMessage (msg: PublishResult) =
+      match msg with
+      | Published upd ->
           Rep.Message.New
-            ( "The update dependencies:"
+            ( sprintf "Update %O is published." upd
             )
-            ( forest |> List.map (Tree.map string >> Rep.drawTree))
-            Rep.Success
+            []
+      
+      | MissingFileBody upd ->
+          Rep.Message.New
+            ( sprintf "File body for update '%O' is missed." upd
+            )
+            []
+
+    let availableToPrintMessage (msg: AvailableResponse) =
+      match msg with
+      | ListAvailable efis ->
+          efis
+          |> List.map Json.escFileInfoToJson
+          |> Json.jsonMessagesToSingleJson
+          |> PrettyPrint.Json.pretty
+
+      | EscNotFound upd ->
+          Rep.Message.New
+            ( "Cannot find *.esc file for update '" + string upd + "'."
+            )
+            []
+            |> Rep.pmsgToDoc
+
+    let resolutionToPrintMessage (msg: ResolutionResult) =
+      match msg with
+      | Solution forest ->
+        Rep.Message.New
+          ( "The update dependencies:"
+          )
+          ( forest |> List.map (Tree.map string >> Rep.drawTree))
+          
 
       | UpdateNotFound (updName, suggestions) ->
           Rep.Message.New
-            ( "Could not find any update named '" + updName.ToString() + "'. Maybe you want one of those?"
+            ( "Could not find any update named '" + string updName + "'. Maybe you want one of those?"
             )
             [ List.map (txt << string) suggestions |> vcat
             ]
-            Rep.Error
 
       | IncompatibleConstraints (act1, act2) ->
           Rep.Message.New
@@ -354,8 +427,6 @@ module Domain =
             [ Rep.drawTree (treeFromActivation act1)
               Rep.drawTree (treeFromActivation act2) 
             ]
-            Rep.Error
-
 
       | MissingUpdateVersion act ->
           let docTree, update =
@@ -364,7 +435,7 @@ module Domain =
             | InitialA _ -> txt update, update 
             | ChildA (_, constr, parentAct) ->
                 let tree =
-                  Node (showNode (activationUpdate parentAct) constr, seq [update |> string |> Tree.singleton])
+                  Node (Rep.showNode (activationUpdate parentAct) constr, seq [update |> string |> Tree.singleton])
                   // |> Tree.map (activationUpdate >> string)
                 in
                   Rep.drawTree tree, update
@@ -373,46 +444,76 @@ module Domain =
             ( "Cannot resolve dependencies. Missing update version."
             )
             [ docTree ]
-            Rep.Error
 
-    let internal validationToMsg (res: ValidationResult) =
-      match res with
-      | Valid (upd,_) ->
-          Rep.Message.New ("The update name '" + (string upd) + "' is valid.") [] Rep.Success
-      | Invalid problem ->
-          Rep.Message.New "The update name is invalid." [ txt problem ] Rep.Error
-
-    let internal versionCheckToMsg (res: VersionCheckResult) =
-      match res with
-      | CorrectVersion (upd,_) ->
+    let convertionEscToPrintMessage (msg: ConvertToEscResult) =
+      match msg with
+      | Converted (upd, (uri,_)) ->
           Rep.Message.New
-            ( "Update version '" + (string upd) + "' is good."
+            ( sprintf "Update '%O' is converted to esc-file '%O' successfully." upd uri
             )
             []
-            Rep.Success         
+
+      | ConvertionSourceNotFound upd ->
+          Rep.Message.New
+            ( sprintf "Cannot find *.upd file for update '%O'." upd
+            )
+            []
+
+    let versionCheckToPrintMessage (msg: VersionCheckResult) =
+      match msg with
+      | CorrectVersion upd ->
+          Rep.Message.New
+            ( "Update version '" + (string upd) + "' is correct."
+            )
+            []       
       
-      | AlreadyPublished (upd) ->
+      | AlreadyPublished upd ->
           Rep.Message.New
             ( "Update '" + (string upd) + "' has already been published. You cannot publish it again!"
             )
             []
-            Rep.Error
 
-      | Unexpected (upd, version) ->
+      | UnexpectedVersion (upd, version) ->
           Rep.Message.New
-            ( "You cannot publish a package with an unexpected version.\n" +
-              "The next version should be greater then '" + (string version) + "'."
+            ( "The next version should be greater then '" + (string version) + "'."
             )
             []
-            Rep.Error
-    
-    let internal escFileInfoToMsg (efi: EscFileInfo) =
-      JsonObject (
-        KeyValuePair("Name", JsonPrimitive("blabla") :> JsonValue),
-        KeyValuePair("Url", JsonPrimitive(string efi.Source) :> JsonValue),
-        KeyValuePair("Hash", JsonPrimitive(efi.Md5Hash) :> JsonValue),
-        KeyValuePair("Size", JsonPrimitive(string efi.Size) :> JsonValue)
-      )
+
+  type DomainMessage with
+
+    override dmsg.ToString () =
+      let doc =
+        match dmsg with
+        | Never -> Rep.Message.Zero |> Rep.pmsgToDoc
+        
+        | ValidationMessage msg ->
+            msg
+            |> Result.map (sprintf "Update name %O is valid.")
+            |> Rep.resultToMsg
+            |> Rep.pmsgToDoc
+
+        | ResolutionMessage resmsg ->       
+            resolutionToPrintMessage resmsg |> Rep.pmsgToDoc
+
+        | VersionCheckMessage vcmsg ->
+            versionCheckToPrintMessage vcmsg |> Rep.pmsgToDoc
+
+        | AvailableMessage msg ->
+            availableToPrintMessage msg
+
+        | ConvertToEscMessage msg ->
+            convertionEscToPrintMessage msg |> Rep.pmsgToDoc
+            
+        | PublishMessage msg ->
+            msg
+            |> publishResultToPrintMessage
+            |> Rep.pmsgToDoc
+
+        | UnexpectedError err ->
+            err |> PrettyPrint.PPrint.txt
+      
+      in
+        doc |> PrettyPrint.PPrint.render ^ Some 78
       
   module Operations =
     let inline (>>=) x f = UpdaterProgram.bind f x 

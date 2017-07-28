@@ -13,21 +13,26 @@ module DataAccess =
   type IDbContext =
     abstract GetUpdate : Update -> Result<Update * UpdateSpecs, string>
     
-    abstract GetUpdateUri : Update list -> Result<(Update * Uri) list, string>
+    abstract GetUpdateUri : Update -> Result<Update * Uri, string>
 
-    abstract GetAvailableUpdates : CustomerId -> Result<Update list, string>
+    abstract GetAvailableUpdates : CustomerId -> Result<Update Set, string>
     
-    abstract GetVersionsByName : UpdateName -> Result<Update list, string>
+    abstract GetVersionsByName : UpdateName -> Result<Update Set, string>
     
-    abstract GetDependencies : Update list -> Result<Update list, string>
+    abstract GetDependencies : Update seq -> Result<Update Set, string>
     
-    abstract Upsert : UpdateInfo * IO.Stream -> Result<Update, string>
+    abstract Upsert : Update * UpdateSpecs * IO.Stream -> Result<Update, string>
 
     abstract AddToUsers : Map<Update, CustomerId> -> Result<Map<Update, CustomerId>, string>
 
     abstract AcceptDownloading : Update * CustomerId -> Result<Update, string>
 
     abstract AcceptInstallation : Update * CustomerId -> Result<Update, string>
+
+  type EscRepository =
+    { Get: Update -> Result<EscFileInfo option, string>
+      Put: Update -> EscFileInfo -> Result<Update * EscFileInfo, string>
+    }
 
   /// This class represents an in-memory storage
   type InMemoryDbContext() = 
@@ -74,32 +79,33 @@ module DataAccess =
       |> Map.toList
       |> List.map fst
       |> List.filter (fun upd -> upd.Name = updName)
+      |> Set.ofList
 
     interface IDbContext with
       member this.GetUpdate (upd: Update) =
         lookupSet
         |> Map.tryFind upd
-        |> ResultExt.fromOption (sprintf "Update '%O' not found." upd)
+        |> Result.ofOption (sprintf "Update '%O' not found." upd)
         <!> (fun specs -> upd, specs)
       
-      member this.GetUpdateUri upds = // todo look at lookup Set!!
-        upds
-        |> List.map (fun upd -> (upd, sprintf "%s/%O/%O" BaseUri upd.Name upd.Version |> Uri))
+      member this.GetUpdateUri upd = // todo look at lookup Set!!
+        (upd, sprintf "%s/%O/%O" BaseUri upd.Name upd.Version |> Uri)
         |> Ok
 
       member this.GetVersionsByName (updName: UpdateName) =
         getVersionsByName updName |> Ok
 
-      member this.GetDependencies (upds: Update list)  =
+      member this.GetDependencies (upds: Update seq)  =
         upds
-        |> List.collect (fun upd ->
+        |> Seq.collect (fun upd ->
             upd.Constraints
             |> List.map (fun (Dependency (updName,_)) -> updName)
         )
-        |> List.collect getVersionsByName
+        |> Seq.collect getVersionsByName
+        |> Set.ofSeq
         |> Ok
         
-      member this.Upsert ((upd, updspecs), stream) =
+      member this.Upsert (upd, updspecs, stream) =
         async {
           use hc = new HttpClient()
           use ms = new IO.MemoryStream()
@@ -111,14 +117,12 @@ module DataAccess =
           use data =
             new StreamContent(stream)
 
-          // let! resp = hc.PutAsync(uri, data) |> Async.AwaitTask
-
           lookupSet <- (Map.add upd updspecs) lookupSet
           return upd
         }
         |> Async.Catch
         |> Async.RunSynchronously
-        |> ResultExt.fromChoice
+        |> Result.ofChoice
         <?> string
 
       member this.AddToUsers (dict) =
@@ -140,4 +144,5 @@ module DataAccess =
         |> Map.toList
         // |> List.filter (fun (_,(i,d)) -> i && d)
         |> List.map fst
+        |> Set.ofList
         |> Ok

@@ -9,18 +9,18 @@
     <Compile Include="Domain.fs"/>
     <Compile Include="DataAccess.fs"/>
     <Compile Include="DependencyResolution.fs"/>
+    <Compile Include="App.fs"/>
     <Compile Include="Program.fs"/>
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="FParsec" Version="1.0.3-beta-20170521"/>
     <PackageReference Include="FSharp.Core" Version="4.2.1"/>
     <PackageReference Include="FSharp.NET.Sdk" Version="1.0.5" PrivateAssets="All"/>
-    <PackageReference Include="Microsoft.AspNetCore.Routing" Version="2.0.0-preview2-final"/>
-    <PackageReference Include="Microsoft.AspNetCore.Server.Kestrel" Version="2.0.0-preview2-final"/>
+    <PackageReference Include="Suave" Version="2.1.1"/>
     <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="2.0.0-preview2-final"/>
     <PackageReference Include="System.IO.Compression" Version="4.3.0"/>
     <PackageReference Include="System.Security.Cryptography.Algorithms" Version="4.3.0"/>
-    <PackageReference Include="System.Json" Version="4.4.0-preview2-25405-01"/>
     <PackageReference Include="System.Text.Encoding.CodePages" Version="4.4.0-preview2-25405-01"/>
+    <PackageReference Include="Chiron" Version="7.0.0-alpha-170410"/>
   </ItemGroup>
 </Project>
