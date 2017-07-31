@@ -12,6 +12,39 @@ module Utils =
 
   let inline (^) x = x
 
+  module IO =
+    open System
+    
+    let rec copyData (ins: IO.Stream) (outs: IO.Stream) = async {   
+      let buf = Array.zeroCreate 1024
+      let! bytes = ins.AsyncRead buf
+      if bytes > 0 then
+        do! outs.AsyncWrite(buf, 0, bytes)
+        return! copyData ins outs
+    }
+
+    let compressFile (ins: IO.Stream) outName = async {
+      use compressedFileStream = IO.File.Create outName
+      use compressionStream =
+        new IO.Compression.GZipStream(compressedFileStream, IO.Compression.CompressionMode.Compress)
+
+      do! copyData ins compressionStream;
+    }
+
+    let compressFileToZip entryName (input: IO.Stream) outZipName = async {
+      use zipStream = IO.File.Create outZipName
+      use archive =
+        new IO.Compression.ZipArchive (zipStream, IO.Compression.ZipArchiveMode.Create)
+      use writeStream = archive.CreateEntry(entryName).Open()
+      do! copyData input writeStream;
+    }
+
+    let calculateMd5 (ins: IO.Stream) =
+      use md5 = Security.Cryptography.MD5.Create()
+      let res = ins |> md5.ComputeHash |> Array.map (fun i -> i.ToString("X2")) |> Array.reduce (+)
+      ins.Position <- 0L;
+      res
+
 /// A type-safe list that contains at least one element.
   type NonEmptyList<'t> =
     { Head: 't
@@ -134,7 +167,7 @@ module Utils =
     /// pipeline version of apply
     let ( <|*> ) fP xP = apply xP fP
 
-    let (>=>) f g x = (f x) >>= g 
+    let (>=>) f g x = (f x) >>= g
   
   module Choice =
     let rec sequence choices =
@@ -539,11 +572,12 @@ module Utils =
         <^> line
 
     let inline resultToMsg res =
-      match res with
-      | Result.Ok res ->
-          Message.New "Success:" [res |> string |> txt]
-      | Result.Error err ->
-          Message.New "Failure:" [err |> string |> txt]
+      let msg =
+        match res with
+        | Result.Ok res -> string res
+        | Result.Error err -> string err
+      in
+        Message.New "" [txt msg]
 
     type Message with
       override x.ToString() =

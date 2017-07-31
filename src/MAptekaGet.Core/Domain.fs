@@ -130,6 +130,7 @@ module Domain =
   type UpdateSpecs =
     { Author      : string
       Summary     : string
+      UniqueCode  : string
       Description : string
       ReleaseNotes: string
       Created     : DateTime
@@ -267,14 +268,14 @@ module Domain =
     | Authorize           of                (User -> 'next)
     | ValidateUpdate      of                (Update -> 'next)
     | ReadSpecs           of                (UpdateSpecs -> 'next)
-    | ReadUser            of                (CustomerId -> 'next)
+    | ReadUpdateAndUser   of                (Update * CustomerId -> 'next)
     | CheckVersion        of Update       * (Update -> 'next)
     | ResolveDependencies of Update Set   * (Tree<Update> list -> 'next)
     | Publish             of UpdateInfo   * (UpdateInfo -> 'next)
     | GetAvailableUpdates of User         * (EscFileInfo list  -> 'next)
-    | ConvertToEsc        of CustomerId * Update Set
-                                          * (EscFileInfo list -> 'next)
-    | PrepareToInstall    of CustomerId * Update Set
+    | ConvertToEsc        of CustomerId * Update
+                                          * (Update * EscFileInfo -> 'next)
+    | PrepareToInstall    of CustomerId * Update
                                           * 'next
 
   let private mapInstruction f inst  = 
@@ -282,7 +283,7 @@ module Domain =
     | Authorize next                      -> Authorize (next >> f)
     | ValidateUpdate next                 -> ValidateUpdate (next >> f)
     | ReadSpecs next                      -> ReadSpecs (next >> f)
-    | ReadUser next                       -> ReadUser (next >> f)
+    | ReadUpdateAndUser next              -> ReadUpdateAndUser (next >> f)
     | CheckVersion (input, next)          -> CheckVersion (input, next >> f)
     | ResolveDependencies (upds, next)    -> ResolveDependencies (upds, next >> f) 
     | Publish (ui, next)                  -> Publish (ui, next >> f)
@@ -312,8 +313,8 @@ module Domain =
     let readSpecs =
       KeepGoing (ReadSpecs (Stop))
 
-    let readUser =
-      KeepGoing (ReadUser (Stop))      
+    let readUpdateAndUser =
+      KeepGoing (ReadUpdateAndUser (Stop))      
 
     let validateUpdate =
       KeepGoing (ValidateUpdate (Stop))    
@@ -327,14 +328,16 @@ module Domain =
     let publish uis =
       KeepGoing (Publish (uis, Stop))
      
-    let convertToEsc cid upds =
-      KeepGoing (ConvertToEsc (cid, upds, Stop))
+    let convertToEsc cid upd =
+      KeepGoing (ConvertToEsc (cid, upd, Stop))
 
-    let prepareToInstall cid upds =
-      KeepGoing (PrepareToInstall (cid, upds, Stop ()))
+    let prepareToInstall cid upd =
+      KeepGoing (PrepareToInstall (cid, upd, Stop ()))
 
     let availableUpdates cid =
       KeepGoing (GetAvailableUpdates (cid, Stop))
+
+    let ignore _ = Stop ()
 
   module internal Json =
     open Chiron

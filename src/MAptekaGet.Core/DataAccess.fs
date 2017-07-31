@@ -11,11 +11,13 @@ module DataAccess =
 
   /// This is a data access wrapper around a any storage
   type IDbContext =
-    abstract GetUpdate : Update -> Result<Update * UpdateSpecs, string>
+    abstract GetUpdate : Update -> Result<UpdateInfo, string>
     
     abstract GetUpdateUri : Update -> Result<Update * Uri, string>
 
     abstract GetAvailableUpdates : CustomerId -> Result<Update Set, string>
+
+    abstract AddUpdatesByUniqueCode : string list * CustomerId -> Async<Result<unit, string>>
     
     abstract GetVersionsByName : UpdateName -> Result<Update Set, string>
     
@@ -52,6 +54,7 @@ module DataAccess =
       [ (``mapteka-2.27``,
          (  { Author = ""
               Summary = ""
+              UniqueCode = ""
               Description = ""
               ReleaseNotes = ""
               Created = DateTime.UtcNow
@@ -61,6 +64,7 @@ module DataAccess =
         (``mapteka-2.28``,
          (  { Author = ""
               Summary = ""
+              UniqueCode = ""
               Description = ""
               ReleaseNotes = ""
               Created = DateTime.UtcNow
@@ -146,3 +150,18 @@ module DataAccess =
         |> List.map fst
         |> Set.ofList
         |> Ok
+
+      member this.AddUpdatesByUniqueCode (targetCodes, customerId) =
+        targetCodes
+        |> List.collect (fun targetCode ->
+          lookupSet
+          |> Map.filter (fun _ {UniqueCode=uniqueCode} -> uniqueCode = targetCode)
+          |> Map.toList
+          |> List.map fst
+        )
+        |> List.iter (fun upd ->
+            if not (Map.containsKey upd installed) then
+              installed <- Map.add upd (false, false) installed
+        )
+        |> Ok
+        |> Async.result

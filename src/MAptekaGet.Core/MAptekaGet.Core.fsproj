@@ -5,10 +5,10 @@
     <OutputType>Exe</OutputType>
   </PropertyGroup>
   <ItemGroup>
-    <Compile Include="Utils.fs"/>
+    <Compile Include="Prelude.fs"/>
     <Compile Include="Domain.fs"/>
-    <Compile Include="DataAccess.fs"/>
     <Compile Include="DependencyResolution.fs"/>
+    <Compile Include="DataAccess.fs"/>
     <Compile Include="App.fs"/>
     <Compile Include="Program.fs"/>
   </ItemGroup>
