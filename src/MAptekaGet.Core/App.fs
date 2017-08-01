@@ -22,6 +22,8 @@ module App =
   module Rep  = Reporting
   module UP   = UpdaterProgram
 
+  Text.Encoding.RegisterProvider(Text.CodePagesEncodingProvider.Instance); // we need win-1251 sometimes...
+
   type Config =
     { IP            : Net.IPAddress
       Port          : Sockets.Port
@@ -78,8 +80,6 @@ module App =
       open System.Xml.Linq
 
       let extractUniqueCodesFromProtocol (input: IO.Stream) =
-  
-        Text.Encoding.RegisterProvider(Text.CodePagesEncodingProvider.Instance);
 
         let xdoc = XDocument.Load (input)
         in "Item" |> XName.Get |> xdoc.Descendants |> Seq.map (fun el -> el.Value)
@@ -89,7 +89,7 @@ module App =
         let decompressedStream = new IO.MemoryStream()
         use decompressionStream =
           new IO.Compression.GZipStream(compressedStream, IO.Compression.CompressionMode.Decompress)
-        do! IO.copyData compressedStream decompressedStream
+        do! IO.copyData decompressionStream decompressedStream
 
         decompressedStream.Position <- 0L;
 
@@ -116,14 +116,16 @@ module App =
         
         let! response =
           downloader.PostAsync(escConvertUri, formContent) |> Async.AwaitTask
+          
         let! responseStream =
           response.Content.ReadAsStreamAsync() |> Async.AwaitTask
 
         let! status = responseStream.AsyncRead 7
         
         if (status |> Array.map char |> System.String |> String.toLowerInvariant) <> "success" then
-          let! err = responseStream.AsyncRead Int32.MaxValue // to the end
-          failwith (Text.Encoding.UTF8.GetString err)
+          use errms = new IO.MemoryStream()
+          do! IO.copyData responseStream errms;
+          failwith (Text.Encoding.GetEncoding(1251).GetString (errms.ToArray()))
         
         clearFileTemp tempFilePath;
 
@@ -146,18 +148,16 @@ module App =
         response.EnsureSuccessStatusCode |> ignore
       }
 
-    
-    
-    let inline keepGoingIfSucceed (state: HttpInterpreterState) next f = function
+    let inline thenIfSucceed (state: HttpInterpreterState) next f = function
       | Ok (x, dmsg) ->
           f ({state with Message = dmsg}) (next x)
       | Error dmsg ->
           classifyDomMessage dmsg
 
-    let inline keepGoingIfSucceedAsync (state: HttpInterpreterState) next f input ctx =
+    let inline thenIfSucceedAsync (state: HttpInterpreterState) next f input ctx =
       async {
         let! res = input
-        return! keepGoingIfSucceed state next f res ctx
+        return! thenIfSucceed state next f res ctx
       }
 
     let rec addConstraintRes<'err> (upd: Result<Update, 'err>) (constrs: Constraint list) =
@@ -227,7 +227,7 @@ module App =
           IO.Directory.CreateDirectory TempDir |> ignore
 
         let tempPath = IO.Path.Combine(TempDir, string upd + ".esc")
-        
+
         try
           use! tmpFileStream = IOHelpers.downloadEsc uri cfg.EscConvertUri customerId tempPath
 
@@ -338,17 +338,17 @@ module App =
       match req.fieldData name with Choice1Of2 name_ -> name_ | _ -> ""
 
     let rec nextWebPart (state: HttpInterpreterState) program : WebPart =
-      let goAheadIfSucceed next =
-        keepGoingIfSucceed state next nextWebPart
-      
+      let inline keepGoingIfSucceed next =
+        thenIfSucceed state next nextWebPart
+
       match program with
-      | OrElse (p1, p2) ->
-          [p1; p2] |> List.map (nextWebPart state) |> choose
-      
       | Stop _ ->
           state.Message |> classifyDomMessage
+
+      | OrElse (p1, p2) ->
+          [p1; p2] |> List.map (nextWebPart state) |> choose
           
-      | KeepGoing (Authorize next) ->
+      | AndThen (Authorize next) ->
           request (fun req ->
             match req.header "X-CustomerId" with // temporary unless auth
             | Choice1Of2 user ->
@@ -358,14 +358,14 @@ module App =
                 UNAUTHORIZED "You should set 'X-CustomerId' header." 
           )
 
-      | KeepGoing (ReadUpdateAndUser next) ->
+      | AndThen (ReadUpdateAndUser next) ->
           PUT >=>
             pathScan "/updates/%s/%s/users/%s" (fun (name, vers, userId) ->
               readUpdateAndUser db name vers userId
-              |> goAheadIfSucceed next
+              |> keepGoingIfSucceed next
             )
 
-      | KeepGoing (ReadSpecs next) ->
+      | AndThen (ReadSpecs next) ->
           request (fun req ->
             let specs =
               { Author        = req |> fieldOrEmpty "Author" 
@@ -379,27 +379,27 @@ module App =
               nextWebPart state (next specs)
           )
       
-      | KeepGoing (ValidateUpdate next) ->
+      | AndThen (ValidateUpdate next) ->
           POST >=>
             pathScan "/updates/%s/%s" (fun (name, vers) ->
               request (
                 fieldOrEmpty "Constraints"
                 >> (fun c -> c.Split('\n') |> Seq.toList)
                 >> validateUpdateAndConstrs name vers
-                >> goAheadIfSucceed next
+                >> keepGoingIfSucceed next
               )
             )
 
-      | KeepGoing (CheckVersion (upd, next)) ->
+      | AndThen (CheckVersion (upd, next)) ->
           upd
           |> checkVersion db
-          |> goAheadIfSucceed next
+          |> keepGoingIfSucceed next
 
-      | KeepGoing (ResolveDependencies (upds, next)) ->
+      | AndThen (ResolveDependencies (upds, next)) ->
           resolveDependencies db upds
-          |> goAheadIfSucceed next
+          |> keepGoingIfSucceed next
 
-      | KeepGoing (Publish ((upd, specs), next)) ->
+      | AndThen (Publish ((upd, specs), next)) ->
           request (fun req ->
             req.files
             |> List.tryHead
@@ -411,16 +411,16 @@ module App =
                 |> Result.mapError UnexpectedError
             )
             |> Result.map (fun u -> ((u, specs), PublishMessage (Published u)))
-            |> goAheadIfSucceed next
+            |> keepGoingIfSucceed next
           )
 
-      | KeepGoing (GetAvailableUpdates (user, next)) ->
+      | AndThen (GetAvailableUpdates (user, next)) ->
           let handle rawBody =
             let (Issuer customerId) = user
             in
               customerId
               |> availableUpdates db srv.EscRepository rawBody
-              |> keepGoingIfSucceedAsync state next nextWebPart
+              |> thenIfSucceedAsync state next nextWebPart
 
           path "/updates/available" >=> choose
             [ GET >=> handle None
@@ -428,11 +428,11 @@ module App =
               POST >=> request (fun req -> handle (Some req.rawForm))
             ]
 
-      | KeepGoing (ConvertToEsc (user, upd, next)) ->
+      | AndThen (ConvertToEsc (user, upd, next)) ->
           convertToEsc user db cfg srv.EscRepository upd
-          |> goAheadIfSucceed next
+          |> keepGoingIfSucceed next
       
-      | KeepGoing (PrepareToInstall (user, upd, next)) ->
+      | AndThen (PrepareToInstall (user, upd, next)) ->
           match prepareToInstall user db upd with
           | Ok _ -> // todo handle accurately
               nextWebPart state next
@@ -450,17 +450,36 @@ module App =
     (cts: System.Threading.CancellationTokenSource)
     program =
 
+    let logger =
+      LiterateConsoleTarget([||], LogLevel.Debug) :> Logger
+    
     let webpart =
       choose
         [ POST >=> path "/updates/auth" >=> OK (string Guid.Empty) // stub for test
           interpretAsWebPart config srv program
-        ]
+        ] >=>
+          logWithLevelStructured Logging.Info logger (fun context ->
+            let fields =
+              [ "requestMethod"       , box context.request.method
+                "requestPathAndQuery" , box context.request.url.PathAndQuery
+                "requestId"           , box context.request.trace.traceId
+                "httpStatusReason"    , box context.response.status.reason
+                "httpStatusCode"      , box context.response.status.code
+                "requestForm"         , box context.request.form
+              ]
+              |> Map.ofList
+
+            let format = 
+              "HTTP {requestMethod} at \"{requestPathAndQuery}\" responded {httpStatusReason} ({httpStatusCode})"
+            in
+              (format, fields)
+        )
     
     let serverConfig =
       { defaultConfig
           with  cancellationToken = cts.Token
                 bindings = [ HttpBinding.create HTTP config.IP config.Port ]
-                logger = LiterateConsoleTarget([||], LogLevel.Debug)
+                logger = logger
       }
 
     let _,server =

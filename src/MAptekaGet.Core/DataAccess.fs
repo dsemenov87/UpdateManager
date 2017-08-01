@@ -6,9 +6,6 @@ module DataAccess =
   open System.Net.Http
   open ResultOp
 
-  let [<Literal>] BaseUri =
-    "http://test-mapteka-updater.itapteka.loc/upd/"
-
   /// This is a data access wrapper around a any storage
   type IDbContext =
     abstract GetUpdate : Update -> Result<UpdateInfo, string>
@@ -37,7 +34,7 @@ module DataAccess =
     }
 
   /// This class represents an in-memory storage
-  type InMemoryDbContext() = 
+  type InMemoryDbContext(baseUri) = 
     let ``mapteka-2.27`` =
       { Name        = MApteka
         Version     = {Major=2u; Minor=27u; Patch=0u}
@@ -93,7 +90,7 @@ module DataAccess =
         <!> (fun specs -> upd, specs)
       
       member this.GetUpdateUri upd = // todo look at lookup Set!!
-        (upd, sprintf "%s/%O/%O" BaseUri upd.Name upd.Version |> Uri)
+        (upd, sprintf "%s/%O/%O" baseUri upd.Name upd.Version |> Uri)
         |> Ok
 
       member this.GetVersionsByName (updName: UpdateName) =
@@ -116,7 +113,7 @@ module DataAccess =
           stream.CopyTo ms
           
           let uri =
-            sprintf "%s/%O/%O" BaseUri upd.Name upd.Version
+            sprintf "%s/%O/%O" baseUri upd.Name upd.Version
 
           use data =
             new StreamContent(stream)

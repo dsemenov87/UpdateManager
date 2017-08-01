@@ -293,49 +293,49 @@ module Domain =
       
   /// Represent the Updater Program
   type UpdaterProgram<'a> = 
-    | Stop      of 'a
-    | KeepGoing of UpdaterInstruction<UpdaterProgram<'a>>
-    | OrElse    of UpdaterProgram<'a> * UpdaterProgram<'a>
+    | Stop    of 'a
+    | OrElse  of UpdaterProgram<'a> * UpdaterProgram<'a>
+    | AndThen of UpdaterInstruction<UpdaterProgram<'a>>
 
   [<RequireQualifiedAccess>]
   module UpdaterProgram =
     let rec bind f = function 
-      | KeepGoing instruction -> KeepGoing (mapInstruction (bind f) instruction)
-      | Stop x                -> f x
-      | OrElse (p1, p2)       -> OrElse (bind f p1, bind f p2)           
+      | Stop x              -> f x
+      | OrElse (p1, p2)     -> OrElse (bind f p1, bind f p2)           
+      | AndThen instruction -> AndThen (mapInstruction (bind f) instruction)
 
     let inline orElse p1 p2 = OrElse (p1, p2)
     let inline choice progs = Seq.reduce orElse progs 
 
     let authorize =
-      KeepGoing (Authorize (Stop))
+      AndThen (Authorize (Stop))
     
     let readSpecs =
-      KeepGoing (ReadSpecs (Stop))
+      AndThen (ReadSpecs (Stop))
 
     let readUpdateAndUser =
-      KeepGoing (ReadUpdateAndUser (Stop))      
+      AndThen (ReadUpdateAndUser (Stop))      
 
     let validateUpdate =
-      KeepGoing (ValidateUpdate (Stop))    
+      AndThen (ValidateUpdate (Stop))    
 
     let checkVersion input =
-      KeepGoing (CheckVersion (input, Stop))
+      AndThen (CheckVersion (input, Stop))
 
     let resolveDependencies input =
-      KeepGoing (ResolveDependencies (input, Stop))
+      AndThen (ResolveDependencies (input, Stop))
 
     let publish uis =
-      KeepGoing (Publish (uis, Stop))
+      AndThen (Publish (uis, Stop))
      
     let convertToEsc cid upd =
-      KeepGoing (ConvertToEsc (cid, upd, Stop))
+      AndThen (ConvertToEsc (cid, upd, Stop))
 
     let prepareToInstall cid upd =
-      KeepGoing (PrepareToInstall (cid, upd, Stop ()))
+      AndThen (PrepareToInstall (cid, upd, Stop ()))
 
     let availableUpdates cid =
-      KeepGoing (GetAvailableUpdates (cid, Stop))
+      AndThen (GetAvailableUpdates (cid, Stop))
 
     let ignore _ = Stop ()
 

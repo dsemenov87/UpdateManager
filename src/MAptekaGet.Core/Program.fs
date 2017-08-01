@@ -55,7 +55,7 @@ module Program =
     // resolve dependecies here...
     
     let services : App.Services =
-      { Db = InMemoryDbContext()
+      { Db = InMemoryDbContext(env "UPD_BASE_URI") //"http://test-mapteka-updater.itapteka.loc/upd/"
         EscRepository =
           { Get = fun k -> escStorage |> Map.tryFind k |> Ok 
             Put = fun k v -> escStorage <- Map.add k v escStorage; Ok (k, v)
