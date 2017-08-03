@@ -416,7 +416,7 @@ module App =
 
       | AndThen (ReadUserUpdates next) ->
           PATCH >=>
-            pathScan "/users/%s/updates" (fun userId ->
+            pathScan "/api/v1/users/%s/updates" (fun userId ->
               request (fun req ->
                 readUserUpdates db req.form userId
                 |> keepGoingIfSucceed next
@@ -439,7 +439,7 @@ module App =
 
       | AndThen (ReadEscUri next) ->
           PATCH >=>
-            pathScan "/esc/%s.esc" (fun escId ->
+            pathScan "/api/v1/internal/esc/%s" (fun escId ->
               let ub = UriBuilder(cfg.EscUriPrefix)
               ub.Path <- ub.Path + escId + ".esc"
               nextWebPart state (next ub.Uri)
@@ -447,7 +447,7 @@ module App =
       
       | AndThen (ValidateUpdate next) ->
           POST >=>
-            pathScan "/updates/%s/%s" (fun (name, vers) ->
+            pathScan "/api/v1/updates/%s/%s" (fun (name, vers) ->
               request (
                 fieldOrEmpty "Constraints"
                 >> (fun c -> c.Split('\n') |> Seq.toList)
@@ -488,7 +488,7 @@ module App =
               |> availableUpdates db srv.EscRepository rawBody
               |> thenIfSucceedAsync state next nextWebPart
 
-          path "/updates/available" >=> choose
+          path "/api/v1/updates/available" >=> choose
             [ GET >=> handle None
               
               POST >=> request (fun req -> handle (Some req.rawForm))
