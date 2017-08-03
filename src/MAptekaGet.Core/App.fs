@@ -28,6 +28,7 @@ module App =
   type Config =
     { IP            : Net.IPAddress
       Port          : Sockets.Port
+      UpdBaseUri    : Uri
       EscConvertUri : Uri
       EscUriPrefix  : Uri
     }
@@ -257,8 +258,8 @@ module App =
                 use zipFileStream = IO.File.OpenRead tempZipPath
                 IO.calculateMd5 zipFileStream
 
-              let ub = UriBuilder(cfg.EscUriPrefix)
-              ub.Path <- ub.Path + escName
+              let ub = UriBuilder(cfg.UpdBaseUri)
+              ub.Path <- ub.Path + "esc/" + escName
 
               let ecsUri = ub.Uri
 
