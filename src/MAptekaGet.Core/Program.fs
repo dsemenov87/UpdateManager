@@ -53,7 +53,8 @@ module Program =
     // resolve dependecies here...
     
     let services : App.Services =
-      { Db = InMemoryDbContext(env "UPD_BASE_URI" |> Choice.orDefault "http://test-mapteka-updater.itapteka.loc/upd/")
+      { Db = InMemoryDbContext( env "UPD_BASE_URI"  |> Choice.orDefault "http://test-mapteka-updater.itapteka.loc/upd/",
+                                env "EXT_UPD_URI"   |> Choice.orDefault "http://test-mapteka-updater.itapteka.loc/upd/")
         EscRepository =
           { Get = fun cid -> escStorage |> Map.tryFind cid |> (function None -> Ok Seq.empty | Some x -> Ok x)
             Put = fun cid efi updSet fetched ->

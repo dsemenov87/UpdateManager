@@ -30,7 +30,7 @@ module DataAccess =
     }
 
   /// This class represents an in-memory storage
-  type InMemoryDbContext(baseUri) = 
+  type InMemoryDbContext(baseUri, externalUri) = 
     let ``mapteka-2.27`` =
       { Name        = MApteka
         Version     = {Major=2u; Minor=27u; Patch=0u}
@@ -86,7 +86,7 @@ module DataAccess =
         <!> (fun specs -> upd, specs)
       
       member this.GetUpdateUri upd = // todo look at lookup Set!!
-        (upd, sprintf "%s%O/%O" baseUri upd.Name upd.Version |> Uri)
+        (upd, sprintf "%s%O/%O" externalUri upd.Name upd.Version |> Uri)
         |> Ok
 
       member this.GetVersionsByName (updName: UpdateName) =
