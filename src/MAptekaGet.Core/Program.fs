@@ -3,25 +3,23 @@ namespace MAptekaGet
 open System
 open System.Threading
 
+open Suave.Utils
+
 module Program =
   open DataAccess
-  module UP = UpdaterProgram
   open Domain.Operations
-  open Suave.Logging
 
-  let env = Environment.GetEnvironmentVariable
+  module UP = UpdaterProgram
 
   [<EntryPoint>]
   let main argv =
-    // "ESC_CONVERT_URI" "http://w7-grishin:1972/csp/updaptservice/User.UpdAptToEscService.cls"
-    // "ESC_URI_PREFIX" "http://test-mapteka-updater.itapteka.loc/esc/"    
 
     let defaultConfig : App.Config =
       // default bind to 127.0.0.1:8080
       { IP = System.Net.IPAddress.Loopback
         Port = 8080us
-        EscConvertUri = Uri (env "ESC_CONVERT_URI")
-        EscUriPrefix  = Uri (env "ESC_URI_PREFIX")
+        EscConvertUri = Uri (env "ESC_CONVERT_URI"  |> Choice.orDefault "http://w7-grishin:1972/csp/updaptservice/User.UpdAptToEscService.cls")
+        EscUriPrefix  = Uri (env "ESC_URI_PREFIX"   |> Choice.orDefault "http://test-mapteka-updater.itapteka.loc/esc/")
       }
     
     // parse arguments
@@ -50,18 +48,25 @@ module Program =
         argv |> List.ofArray |> parseArgs defaultConfig
 
     // static objects...
-    let mutable escStorage : Map<Update, EscFileInfo> = Map.empty
+    let mutable escStorage : Map<CustomerId, (EscFileInfo * Update Set * bool) seq> = Map.empty
 
     // resolve dependecies here...
     
     let services : App.Services =
-      { Db = InMemoryDbContext(env "UPD_BASE_URI") //"http://test-mapteka-updater.itapteka.loc/upd/"
+      { Db = InMemoryDbContext(env "UPD_BASE_URI" |> Choice.orDefault "http://test-mapteka-updater.itapteka.loc/upd/")
         EscRepository =
-          { Get = fun k -> escStorage |> Map.tryFind k |> Ok 
-            Put = fun k v -> escStorage <- Map.add k v escStorage; Ok (k, v)
+          { Get = fun cid -> escStorage |> Map.tryFind cid |> (function None -> Ok Seq.empty | Some x -> Ok x)
+            Put = fun cid efi updSet fetched ->
+              let newValue =
+                let entry = [(efi, updSet, fetched)]
+                match Map.tryFind cid escStorage with
+                | None      -> seq entry
+                | Some ecss -> Seq.append entry ecss
+              
+              escStorage <- Map.add cid newValue escStorage; Ok efi
           }
       }
-    
+
     use cts = new CancellationTokenSource()
 
     let program =
@@ -75,20 +80,21 @@ module Program =
             
             UP.availableUpdates user >>= UP.ignore
 
-            UP.readUpdateAndUser >>= (fun (upd, user) ->
-              UP.convertToEsc user upd >>= (fun _ ->
-                UP.prepareToInstall user upd
+            UP.readUserUpdates >>= (fun (upds, user) ->
+              UP.convertToEsc user upds >>= (fun _ ->
+                UP.prepareToInstall user upds
               )
+            )
+
+            UP.readEscUri >>= (fun escUri ->
+              let (Issuer customerId) = user
+              in
+                UP.acceptDownloading customerId escUri
             )
           ]
       )
 
-    App.interpretProgram config services cts program;
-
-    printfn "Make requests now"
-    Console.ReadKey true |> ignore
-        
-    cts.Cancel()
+    App.interpretProgram config services cts program |> ignore
 
     0
 

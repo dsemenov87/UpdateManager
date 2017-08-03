@@ -243,8 +243,9 @@ module Domain =
     | EscNotFound   of Update
 
   type ConvertToEscResult =
-    | Converted                 of Update * EscFileInfo
-    | ConvertionSourceNotFound  of Update
+    | EmptyUpdateList
+    | Converted                 of Update Set * EscFileInfo
+    | ConvertionSourceNotFound  of Update Set
 
   type UpdateInfo = Update * UpdateSpecs
 
@@ -255,12 +256,14 @@ module Domain =
 
   type DomainMessage =
     | Never
-    | ValidationMessage     of Result<Update, string>
+    | ValidationMessage     of Result<Update Set, string>
     | VersionCheckMessage   of VersionCheckResult
     | ResolutionMessage     of ResolutionResult
     | AvailableMessage      of AvailableResponse
     | ConvertToEscMessage   of ConvertToEscResult
     | PublishMessage        of PublishResult
+    | AcceptDownloadingMessage    
+                            of Result<Uri, string>
     | UnexpectedError       of string
 
   /// Represents each instruction
@@ -268,14 +271,17 @@ module Domain =
     | Authorize           of                (User -> 'next)
     | ValidateUpdate      of                (Update -> 'next)
     | ReadSpecs           of                (UpdateSpecs -> 'next)
-    | ReadUpdateAndUser   of                (Update * CustomerId -> 'next)
+    | ReadUserUpdates     of                (Update Set * CustomerId -> 'next)
+    | ReadEscUri          of                (Uri -> 'next)
     | CheckVersion        of Update       * (Update -> 'next)
     | ResolveDependencies of Update Set   * (Tree<Update> list -> 'next)
     | Publish             of UpdateInfo   * (UpdateInfo -> 'next)
     | GetAvailableUpdates of User         * (EscFileInfo list  -> 'next)
-    | ConvertToEsc        of CustomerId * Update
-                                          * (Update * EscFileInfo -> 'next)
-    | PrepareToInstall    of CustomerId * Update
+    | ConvertToEsc        of CustomerId * Update Set
+                                          * (EscFileInfo option -> 'next)
+    | PrepareToInstall    of CustomerId * Update Set
+                                          * 'next
+    | AcceptDownloading   of CustomerId * Uri
                                           * 'next
 
   let private mapInstruction f inst  = 
@@ -283,14 +289,16 @@ module Domain =
     | Authorize next                      -> Authorize (next >> f)
     | ValidateUpdate next                 -> ValidateUpdate (next >> f)
     | ReadSpecs next                      -> ReadSpecs (next >> f)
-    | ReadUpdateAndUser next              -> ReadUpdateAndUser (next >> f)
+    | ReadUserUpdates next                -> ReadUserUpdates (next >> f)
+    | ReadEscUri next                     -> ReadEscUri (next >> f)
     | CheckVersion (input, next)          -> CheckVersion (input, next >> f)
     | ResolveDependencies (upds, next)    -> ResolveDependencies (upds, next >> f) 
     | Publish (ui, next)                  -> Publish (ui, next >> f)
     | ConvertToEsc (cid, upds, next)      -> ConvertToEsc (cid, upds, next >> f)
     | PrepareToInstall (cid, upds, next)  -> PrepareToInstall (cid, upds, next |> f)
-    | GetAvailableUpdates (user, next)    -> GetAvailableUpdates (user, next >> f) 
-      
+    | GetAvailableUpdates (user, next)    -> GetAvailableUpdates (user, next >> f)
+    | AcceptDownloading (cid, uri, next) -> AcceptDownloading (cid, uri, next |> f)
+
   /// Represent the Updater Program
   type UpdaterProgram<'a> = 
     | Stop    of 'a
@@ -313,8 +321,11 @@ module Domain =
     let readSpecs =
       AndThen (ReadSpecs (Stop))
 
-    let readUpdateAndUser =
-      AndThen (ReadUpdateAndUser (Stop))      
+    let readUserUpdates =
+      AndThen (ReadUserUpdates (Stop))
+
+    let readEscUri =
+      AndThen (ReadEscUri (Stop))
 
     let validateUpdate =
       AndThen (ValidateUpdate (Stop))    
@@ -336,6 +347,9 @@ module Domain =
 
     let availableUpdates cid =
       AndThen (GetAvailableUpdates (cid, Stop))
+
+    let acceptDownloading cid upd =
+      AndThen (AcceptDownloading (cid, upd, Stop ()))
 
     let ignore _ = Stop ()
 
@@ -449,16 +463,22 @@ module Domain =
             [ docTree ]
 
     let convertionEscToPrintMessage (msg: ConvertToEscResult) =
+      let updsToPrintForm upds =
+        upds |> Seq.map string |> Seq.toList
+
       match msg with
-      | Converted (upd, (uri,_)) ->
+      | EmptyUpdateList ->
+          Rep.Message.New "Empty update list." []
+
+      | Converted (upds, (uri,_)) ->
           Rep.Message.New
-            ( sprintf "Update '%O' is converted to esc-file '%O' successfully." upd uri
+            ( sprintf "Updates %A are converted to *.esc file '%O' successfully." (updsToPrintForm upds) uri
             )
             []
 
-      | ConvertionSourceNotFound upd ->
+      | ConvertionSourceNotFound upds ->
           Rep.Message.New
-            ( sprintf "Cannot find *.upd file for update '%O'." upd
+            ( sprintf "Cannot find *.upd file for one of following updates: %A." (updsToPrintForm upds)
             )
             []
 
@@ -491,7 +511,7 @@ module Domain =
         
         | ValidationMessage msg ->
             msg
-            |> Result.map (sprintf "Update name %O is valid.")
+            |> Result.map (sprintf "%A.")
             |> Rep.resultToMsg
             |> Rep.pmsgToDoc
 
@@ -510,6 +530,12 @@ module Domain =
         | PublishMessage msg ->
             msg
             |> publishResultToPrintMessage
+            |> Rep.pmsgToDoc
+
+        | AcceptDownloadingMessage msg ->
+            msg
+            |> Result.map (sprintf "Esc file '%O' downloading is accepted.")
+            |> Rep.resultToMsg
             |> Rep.pmsgToDoc
 
         | UnexpectedError err ->

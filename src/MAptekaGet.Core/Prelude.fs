@@ -12,6 +12,13 @@ module Utils =
 
   let inline (^) x = x
 
+  let env name =
+    let eitherVar = System.Environment.GetEnvironmentVariable name
+    if System.String.IsNullOrWhiteSpace eitherVar then
+      Choice2Of2 ""
+    else  
+      Choice1Of2 eitherVar
+
   module IO =
     open System
     

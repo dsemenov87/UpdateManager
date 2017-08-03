@@ -24,13 +24,9 @@ module DataAccess =
 
     abstract AddToUsers : Map<Update, CustomerId> -> Result<Map<Update, CustomerId>, string>
 
-    abstract AcceptDownloading : Update * CustomerId -> Result<Update, string>
-
-    abstract AcceptInstallation : Update * CustomerId -> Result<Update, string>
-
   type EscRepository =
-    { Get: Update -> Result<EscFileInfo option, string>
-      Put: Update -> EscFileInfo -> Result<Update * EscFileInfo, string>
+    { Get: CustomerId -> Result<(EscFileInfo * Update Set * bool) seq, string>
+      Put: CustomerId -> EscFileInfo -> Update Set -> bool -> Result<EscFileInfo, string>
     }
 
   /// This class represents an in-memory storage
@@ -71,8 +67,8 @@ module DataAccess =
       ]
       |> Map.ofList
 
-    let mutable installed : Map<Update, bool * bool> =
-      [``mapteka-2.27``, (true, true)]
+    let mutable installed : Map<Update, bool> =
+      [(``mapteka-2.27``, true)]
       |> Map.ofList
 
     let getVersionsByName updName =
@@ -90,7 +86,7 @@ module DataAccess =
         <!> (fun specs -> upd, specs)
       
       member this.GetUpdateUri upd = // todo look at lookup Set!!
-        (upd, sprintf "%s/%O/%O" baseUri upd.Name upd.Version |> Uri)
+        (upd, sprintf "%s%O/%O" baseUri upd.Name upd.Version |> Uri)
         |> Ok
 
       member this.GetVersionsByName (updName: UpdateName) =
@@ -128,17 +124,9 @@ module DataAccess =
 
       member this.AddToUsers (dict) =
         for (upd,_) in Map.toSeq dict do
-          installed <- Map.add upd (false, false) installed;
+          installed <- Map.add upd false installed;
 
         Ok dict
-
-      member this.AcceptDownloading (upd, pharmacyId) =
-        installed <- Map.add upd (true, false) installed
-        Ok upd
-
-      member this.AcceptInstallation (upd, pharmacyId) =
-        installed <- Map.add upd (true, true) installed
-        Ok upd
 
       member this.GetAvailableUpdates (customerId) =
         installed
@@ -158,7 +146,7 @@ module DataAccess =
         )
         |> List.iter (fun upd ->
             if not (Map.containsKey upd installed) then
-              installed <- Map.add upd (false, false) installed
+              installed <- Map.add upd true installed
         )
         |> Ok
         |> Async.result
