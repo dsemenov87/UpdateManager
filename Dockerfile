@@ -2,10 +2,8 @@ FROM microsoft/dotnet:2.0-runtime
 
 WORKDIR /opt/app
 
-COPY /src /opt/app
+COPY src/MAptekaGet.Core/out/ /opt/app
 
-ENV APP_PORT=8083
+EXPOSE 8080
 
-EXPOSE $APP_PORT
-
-ENTRYPOINT ["dotnet", "MAptekaGet.Core.dll"]
+CMD dotnet MAptekaGet.Core.dll --ip 0.0.0.0
