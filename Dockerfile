@@ -4,6 +4,6 @@ WORKDIR /opt/app
 
 COPY src/MAptekaGet.Core/out/ /opt/app
 
-EXPOSE 8080
+EXPOSE 80
 
-CMD dotnet MAptekaGet.Core.dll --ip 0.0.0.0
+CMD dotnet MAptekaGet.Core.dll --ip 0.0.0.0 --port 80
