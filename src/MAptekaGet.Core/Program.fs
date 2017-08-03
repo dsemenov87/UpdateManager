@@ -18,6 +18,7 @@ module Program =
       // default bind to 127.0.0.1:8080
       { IP = System.Net.IPAddress.Loopback
         Port = 8080us
+        UpdBaseUri    = Uri (env "UPD_BASE_URI"     |> Choice.orDefault "http://test-mapteka-updater.itapteka.loc/upd/")
         EscConvertUri = Uri (env "ESC_CONVERT_URI"  |> Choice.orDefault "http://w7-grishin:1972/csp/updaptservice/User.UpdAptToEscService.cls")
         EscUriPrefix  = Uri (env "ESC_URI_PREFIX"   |> Choice.orDefault "http://test-mapteka-updater.itapteka.loc/esc/")
       }
@@ -53,8 +54,8 @@ module Program =
     // resolve dependecies here...
     
     let services : App.Services =
-      { Db = InMemoryDbContext( env "UPD_BASE_URI"  |> Choice.orDefault "http://test-mapteka-updater.itapteka.loc/upd/",
-                                env "EXT_UPD_URI"   |> Choice.orDefault "http://test-mapteka-updater.itapteka.loc/upd/")
+      { Db = InMemoryDbContext( config.UpdBaseUri,
+                                Uri (env "EXT_UPD_URI" |> Choice.orDefault "http://test-mapteka-updater.itapteka.loc/upd/"))
         EscRepository =
           { Get = fun cid -> escStorage |> Map.tryFind cid |> (function None -> Ok Seq.empty | Some x -> Ok x)
             Put = fun cid efi updSet fetched ->
