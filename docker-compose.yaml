@@ -6,11 +6,11 @@ services:
         ports:
             - 80:80
         volumes:
-            - /var/opt/etc/ma-updater.conf:/etc/nginx/conf.d/ma-updater.conf
-            - /www/mapteka-updater:/usr/share/nginx/www
+            - /home/semenov/MAptekaGet/ma-updater.conf:/etc/nginx/conf.d/default.conf
+            - /www
         depends_on:
             - mapteka-get
-        command: /bin/ash -c "rm /etc/nginx/conf.d/default.conf && nginx -g 'daemon off;'"
+        command: /bin/ash -c "chmod 777 /www && nginx -g 'daemon off;'"
     
     mapteka-get:
         #restart: always
@@ -19,8 +19,8 @@ services:
         ports:
             - 8083:80
         environment:
-            - UPD_BASE_URI=http://nginx/storage/upd/
-            - EXT_UPD_URI=http://test-mapteka-updater.itapteka.loc/storage/upd/
+            - UPD_BASE_URI=http://nginx/
+            - EXT_UPD_URI=http://test-mapteka-updater.itapteka.loc/
             - ESC_CONVERT_URI=http://w7-grishin:1972/csp/updaptservice/User.UpdAptToEscService.cls
             - ESC_URI_PREFIX=http://test-mapteka-updater.itapteka.loc/api/v1/esc/
 

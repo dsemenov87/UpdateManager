@@ -86,7 +86,7 @@ module DataAccess =
         <!> (fun specs -> upd, specs)
       
       member this.GetUpdateUri upd = // todo look at lookup Set!!
-        (upd, sprintf "%Oupd/%O/%O" externalUri upd.Name upd.Version |> Uri)
+        (upd, sprintf "%O%O/%O" externalUri upd.Name upd.Version |> Uri)
         |> Ok
 
       member this.GetVersionsByName (updName: UpdateName) =
@@ -107,12 +107,18 @@ module DataAccess =
           use hc = new HttpClient()
           use ms = new IO.MemoryStream()
           stream.CopyTo ms
-          
+         
+          ms.Position <- 0L;
+ 
           let uri =
-            sprintf "%O/%O/%O" baseUri upd.Name upd.Version
+            sprintf "%Oupd/%O/%O" baseUri upd.Name upd.Version
 
           use data =
             new StreamContent(stream)
+
+          let! response = hc.PutAsync (uri, data) |> Async.AwaitTask
+
+          response.EnsureSuccessStatusCode() |> ignore
 
           lookupSet <- (Map.add upd updspecs) lookupSet
           return upd
