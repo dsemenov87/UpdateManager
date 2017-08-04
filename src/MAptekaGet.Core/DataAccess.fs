@@ -105,10 +105,6 @@ module DataAccess =
       member this.Upsert (upd, updspecs, stream) =
         async {
           use hc = new HttpClient()
-          use ms = new IO.MemoryStream()
-          stream.CopyTo ms
-         
-          ms.Position <- 0L;
  
           let uri =
             sprintf "%Oupd/%O/%O" baseUri upd.Name upd.Version
