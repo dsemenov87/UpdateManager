@@ -10,7 +10,7 @@ module DataAccess =
   type IDbContext =
     abstract GetUpdate : Update -> Result<UpdateInfo, string>
     
-    abstract GetUpdateUri : Uri -> (Update -> Result<Update * Uri, string>)
+    abstract GetUpdateUri : string -> (Update -> Result<Update * Uri, string>)
 
     abstract GetAvailableUpdates : CustomerId -> Result<Update Set, string>
 
@@ -85,8 +85,8 @@ module DataAccess =
         |> Result.ofOption (sprintf "Update '%O' not found." upd)
         <!> (fun specs -> upd, specs)
       
-      member this.GetUpdateUri (externalUri: Uri) = fun upd -> // todo look at lookup Set!!
-        (upd, sprintf "%Oupd/%O/%O" externalUri upd.Name upd.Version |> Uri)
+      member this.GetUpdateUri externalHost = fun upd -> // todo look at lookup Set!!
+        (upd, sprintf "%s/upd/%O/%O" externalHost upd.Name upd.Version |> Uri)
         |> Ok
 
       member this.GetVersionsByName (updName: UpdateName) =
