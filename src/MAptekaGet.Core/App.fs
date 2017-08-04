@@ -28,9 +28,10 @@ module App =
   type Config =
     { IP            : Net.IPAddress
       Port          : Sockets.Port
-      UpdBaseUri    : Uri
+      StaticBaseUri : Uri
       EscConvertUri : Uri
-      EscUriPrefix  : Uri
+      EscExternalScheme
+                    : string
     }
   
   type Services =
@@ -114,6 +115,9 @@ module App =
 
         | updUri :: _ ->
           use downloader = new Http.HttpClient()
+
+          printfn "Host: %A" updUri.Host;
+          printfn "PathAndQuery: %A" updUri.PathAndQuery;
 
           use formContent =
             new Http.FormUrlEncodedContent
@@ -258,7 +262,7 @@ module App =
                 use zipFileStream = IO.File.OpenRead tempZipPath
                 IO.calculateMd5 zipFileStream
 
-              let ub = UriBuilder(cfg.UpdBaseUri)
+              let ub = UriBuilder(cfg.StaticBaseUri)
               ub.Path <- ub.Path + "esc/" + escName
 
               let ecsUri = ub.Uri
@@ -330,12 +334,14 @@ module App =
           return getFromDb ()
       }    
 
-    let convertToEsc (user: CustomerId) (db: IDbContext) cfg (escRepository: EscRepository) upds =
+    let convertToEsc (user: CustomerId) (db: IDbContext) cfg (escRepository: EscRepository) upds host =
+      printfn "%A" host;
+      
       if Set.isEmpty upds then
         Ok (None, ConvertToEscMessage EmptyUpdateList)
       else
         upds
-        |> Seq.map db.GetUpdateUri
+        |> Seq.map (db.GetUpdateUri (Uri host))
         |> Seq.toList
         |> Result.sequence
         <?> (fun _ -> upds |> ConvertionSourceNotFound |> ConvertToEscMessage)
@@ -441,8 +447,8 @@ module App =
       | AndThen (ReadEscUri next) ->
           PATCH >=>
             pathScan "/api/v1/internal/esc/%s" (fun escId ->
-              let ub = UriBuilder(cfg.EscUriPrefix)
-              ub.Path <- ub.Path + escId + ".esc"
+              let ub = UriBuilder(cfg.StaticBaseUri)
+              ub.Path <- ub.Path + "esc/" + escId + ".esc"
               nextWebPart state (next ub.Uri)
             )
       
@@ -496,8 +502,12 @@ module App =
             ]
 
       | AndThen (ConvertToEsc (user, upds, next)) ->
-          convertToEsc user db cfg srv.EscRepository upds
-          |> keepGoingIfSucceed next
+          request (fun req ->
+            let externalHost =
+              sprintf "%s://%s" cfg.EscExternalScheme req.clientHostTrustProxy
+            convertToEsc user db cfg srv.EscRepository upds externalHost
+            |> keepGoingIfSucceed next
+          )
       
       | AndThen (PrepareToInstall (user, upds, next)) ->
           match prepareToInstall user db upds with

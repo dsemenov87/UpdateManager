@@ -10,7 +10,7 @@ module DataAccess =
   type IDbContext =
     abstract GetUpdate : Update -> Result<UpdateInfo, string>
     
-    abstract GetUpdateUri : Update -> Result<Update * Uri, string>
+    abstract GetUpdateUri : Uri -> (Update -> Result<Update * Uri, string>)
 
     abstract GetAvailableUpdates : CustomerId -> Result<Update Set, string>
 
@@ -30,7 +30,7 @@ module DataAccess =
     }
 
   /// This class represents an in-memory storage
-  type InMemoryDbContext(baseUri: Uri, externalUri: Uri) = 
+  type InMemoryDbContext(baseUri: Uri) = 
     let ``mapteka-2.27`` =
       { Name        = MApteka
         Version     = {Major=2u; Minor=27u; Patch=0u}
@@ -85,8 +85,8 @@ module DataAccess =
         |> Result.ofOption (sprintf "Update '%O' not found." upd)
         <!> (fun specs -> upd, specs)
       
-      member this.GetUpdateUri upd = // todo look at lookup Set!!
-        (upd, sprintf "%O%O/%O" externalUri upd.Name upd.Version |> Uri)
+      member this.GetUpdateUri (externalUri: Uri) = fun upd -> // todo look at lookup Set!!
+        (upd, sprintf "%Oupd/%O/%O" externalUri upd.Name upd.Version |> Uri)
         |> Ok
 
       member this.GetVersionsByName (updName: UpdateName) =
@@ -105,16 +105,12 @@ module DataAccess =
       member this.Upsert (upd, updspecs, stream) =
         async {
           use hc = new HttpClient()
-          use ms = new IO.MemoryStream()
-          stream.CopyTo ms
-         
-          ms.Position <- 0L;
  
-          let uri =
-            sprintf "%Oupd/%O/%O" baseUri upd.Name upd.Version
-
           use data =
             new StreamContent(stream)
+
+          let uri =
+            sprintf "%Oupd/%O/%O" baseUri upd.Name upd.Version
 
           let! response = hc.PutAsync (uri, data) |> Async.AwaitTask
 
