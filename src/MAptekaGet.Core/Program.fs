@@ -50,7 +50,7 @@ module Program =
         argv |> List.ofArray |> parseArgs defaultConfig
 
     // static objects...
-    let mutable escStorage : Map<CustomerId, (EscFileInfo * Update Set * bool) seq> = Map.empty
+    let mutable escStorage : Map<CustomerId, (EscId * Update Set * bool) seq> = Map.empty
 
     // resolve dependecies here...
     

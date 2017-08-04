@@ -242,9 +242,7 @@ module App =
         if not (IO.Directory.Exists TempDir) then
           IO.Directory.CreateDirectory TempDir |> ignore
 
-        let escId = Guid.NewGuid()
-
-        let tempPath = IO.Path.Combine(TempDir, sprintf "%O.esc" escId)
+        let tempPath = IO.Path.Combine(TempDir, sprintf "%O.esc" (Guid.NewGuid()))
 
         try
           let! maybeStream =
@@ -260,16 +258,14 @@ module App =
 
               let md5sum =
                 use zipFileStream = IO.File.OpenRead tempZipPath
-                IO.calculateMd5 zipFileStream
+                (IO.calculateMd5 zipFileStream).ToUpper()
 
               let ub = UriBuilder(cfg.StaticBaseUri)
-              ub.Path <- ub.Path + (sprintf "esc/%O.esc" escId)
+              ub.Path <- ub.Path + "esc/" + md5sum + ".esc"
 
-              let ecsUri = ub.Uri
+              do! IOHelpers.uploadEsc ub.Uri tempZipPath
 
-              do! IOHelpers.uploadEsc ecsUri tempZipPath
-
-              return (escId, md5sum)
+              return Guid md5sum
 
           | None ->
             return failwith "IOHelpers.downloadEsc returns None.";
@@ -300,16 +296,16 @@ module App =
         return Seq.toList uniqueCodes
       }
 
-    let availableUpdates (db: IDbContext) (escRepository: EscRepository) (compressedProtocol: byte[] option) userId =
+    let availableUpdates (db: IDbContext) externalHost (escRepository: EscRepository) (compressedProtocol: byte[] option) userId =
       let getFromDb () =
         userId
         |> escRepository.Get
         <?> UnexpectedError
-        <!> (fun efis ->
+        <!> (fun res ->
           let lst =
-            efis
+            res
             |> List.ofSeq
-            |> List.map (fun (efis,_,_) -> efis)
+            |> List.map (fun (eid,_,_) -> Uri (externalHost + eid.ToString("N") + ".esc"), eid)
           in
             lst, lst |> ListAvailable |> AvailableMessage
         )
@@ -334,14 +330,14 @@ module App =
           return getFromDb ()
       }    
 
-    let convertToEsc (user: CustomerId) (db: IDbContext) cfg (escRepository: EscRepository) upds host =
+    let convertToEsc (user: CustomerId) (db: IDbContext) (cfg: Config) (escRepository: EscRepository) upds =
       printfn "%A" host;
       
       if Set.isEmpty upds then
         Ok (None, ConvertToEscMessage EmptyUpdateList)
       else
         upds
-        |> Seq.map (db.GetUpdateUri (Uri host))
+        |> Seq.map (db.GetUpdateUri cfg.StaticBaseUri)
         |> Seq.toList
         |> Result.sequence
         <?> (fun _ -> upds |> ConvertionSourceNotFound |> ConvertToEscMessage)
@@ -353,8 +349,8 @@ module App =
             res |> List.map fst |> Set.ofList
 
           uploadEsc cfg user (List.map snd res)
-          >>= (fun (escuri, md5) ->
-            escRepository.Put user (escuri, md5) updSet false
+          >>= (fun md5 ->
+            escRepository.Put user md5 updSet false
             <!> (fun efi -> Some efi, (upds, efi) |> Converted |> ConvertToEscMessage)
             <?> UnexpectedError
           )
@@ -370,13 +366,13 @@ module App =
     let internal acceptDownloading (escRepository: EscRepository) (escId: EscId) userId =
       userId
       |> escRepository.Get
-      <!> Seq.collect (fun (((escId',_) as efi), updSet,_) ->
+      <!> Seq.collect (fun (eid, updSet,_) ->
           let set' =
-            if escId' = escId
+            if eid = escId
               then updSet
               else Set.empty
           
-          efi
+          eid
           |> Seq.replicate (Seq.length set')
           |> Seq.zip set'
       )
@@ -484,26 +480,26 @@ module App =
           )
 
       | AndThen (GetAvailableUpdates (user, next)) ->
-          let handle rawBody =
-            let (Issuer customerId) = user
-            in
-              customerId
-              |> availableUpdates db srv.EscRepository rawBody
-              |> thenIfSucceedAsync state next nextWebPart
+          let handle reqToBody =
+            request (fun req ->
+              let (Issuer customerId) = user
+              let externalHost =
+                sprintf "%s://%s" cfg.EscExternalScheme req.clientHostTrustProxy
+              in
+                customerId
+                |> availableUpdates db externalHost srv.EscRepository (reqToBody req)
+                |> thenIfSucceedAsync state next nextWebPart
+            )
 
           path "/api/v1/updates/available" >=> choose
-            [ GET >=> handle None
+            [ GET >=> handle (fun _ -> None)
               
-              POST >=> request (fun req -> handle (Some req.rawForm))
+              POST >=> handle (fun req -> Some req.rawForm)
             ]
 
       | AndThen (ConvertToEsc (user, upds, next)) ->
-          request (fun req ->
-            let externalHost =
-              sprintf "%s://%s" cfg.EscExternalScheme req.clientHostTrustProxy
-            convertToEsc user db cfg srv.EscRepository upds externalHost
-            |> keepGoingIfSucceed next
-          )
+          convertToEsc user db cfg srv.EscRepository upds
+          |> keepGoingIfSucceed next
       
       | AndThen (PrepareToInstall (user, upds, next)) ->
           match prepareToInstall user db upds with

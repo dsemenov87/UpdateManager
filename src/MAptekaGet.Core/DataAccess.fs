@@ -25,8 +25,8 @@ module DataAccess =
     abstract AddToUsers : Map<Update, CustomerId> -> Result<Map<Update, CustomerId>, string>
 
   type EscRepository =
-    { Get: CustomerId -> Result<(EscFileInfo * Update Set * bool) seq, string>
-      Put: CustomerId -> EscFileInfo -> Update Set -> bool -> Result<EscFileInfo, string>
+    { Get: CustomerId -> Result<(EscId * Update Set * bool) seq, string>
+      Put: CustomerId -> EscId -> Update Set -> bool -> Result<EscId, string>
     }
 
   /// This class represents an in-memory storage

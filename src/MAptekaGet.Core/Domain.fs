@@ -234,11 +234,9 @@ module Domain =
     | Published       of Update
     | MissingFileBody of Update
 
-  type Md5Sum = string
-
   type EscId = Guid
 
-  type EscFileInfo = EscId * Md5Sum
+  type EscFileInfo = Uri * EscId
 
   type AvailableResponse =
     | ListAvailable of EscFileInfo list
@@ -246,7 +244,7 @@ module Domain =
 
   type ConvertToEscResult =
     | EmptyUpdateList
-    | Converted                 of Update Set * EscFileInfo
+    | Converted                 of Update Set * EscId
     | ConvertionSourceNotFound  of Update Set
 
   type UpdateInfo = Update * UpdateSpecs
@@ -280,7 +278,7 @@ module Domain =
     | Publish             of UpdateInfo   * (UpdateInfo -> 'next)
     | GetAvailableUpdates of User         * (EscFileInfo list  -> 'next)
     | ConvertToEsc        of CustomerId * Update Set
-                                          * (EscFileInfo option -> 'next)
+                                          * (EscId option -> 'next)
     | PrepareToInstall    of CustomerId * Update Set
                                           * 'next
     | AcceptDownloading   of CustomerId * EscId
@@ -360,7 +358,7 @@ module Domain =
     
     let escFileInfoToJson ((uri, md5): EscFileInfo) =
       [ ("Url", string uri)
-        ("Hash", md5)
+        ("Hash", md5.ToString("N"))
       ]
       |> Map.ofList
       |> JsonObject.ofMapWith Json.String
@@ -472,9 +470,9 @@ module Domain =
       | EmptyUpdateList ->
           Rep.Message.New "Empty update list." []
 
-      | Converted (upds, (uri,_)) ->
+      | Converted (upds, escId) ->
           Rep.Message.New
-            ( sprintf "Updates %A are converted to *.esc file '%O' successfully." (updsToPrintForm upds) uri
+            ( sprintf "Updates %A are converted to *.esc file '%O' successfully." (updsToPrintForm upds) escId
             )
             []
 
