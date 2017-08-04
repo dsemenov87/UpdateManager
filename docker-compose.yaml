@@ -19,8 +19,7 @@ services:
         ports:
             - 8083:80
         environment:
-            - UPD_BASE_URI=http://nginx/
-            - EXT_UPD_URI=http://test-mapteka-updater.itapteka.loc/
+            - STATIC_BASE_URI=http://nginx/
             - ESC_CONVERT_URI=http://w7-grishin:1972/csp/updaptservice/User.UpdAptToEscService.cls
-            - ESC_URI_PREFIX=http://test-mapteka-updater.itapteka.loc/api/v1/esc/
+            - ESC_EXT_SCHEME=http
 
