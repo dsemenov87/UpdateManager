@@ -330,14 +330,14 @@ module App =
           return getFromDb ()
       }    
 
-    let convertToEsc (user: CustomerId) (db: IDbContext) (cfg: Config) (escRepository: EscRepository) upds =
+    let convertToEsc (user: CustomerId) (db: IDbContext) (cfg: Config) (escRepository: EscRepository) upds externalHost =
       printfn "%A" host;
       
       if Set.isEmpty upds then
         Ok (None, ConvertToEscMessage EmptyUpdateList)
       else
         upds
-        |> Seq.map (db.GetUpdateUri cfg.StaticBaseUri)
+        |> Seq.map (db.GetUpdateUri externalHost)
         |> Seq.toList
         |> Result.sequence
         <?> (fun _ -> upds |> ConvertionSourceNotFound |> ConvertToEscMessage)
@@ -395,6 +395,9 @@ module App =
   
     let inline fieldOrEmpty name (req: HttpRequest) =
       match req.fieldData name with Choice1Of2 name_ -> name_ | _ -> ""
+
+    let inline externalHost (req: HttpRequest) =
+      sprintf "%s://%s" cfg.EscExternalScheme req.clientHostTrustProxy
 
     let rec nextWebPart (state: HttpInterpreterState) program : WebPart =
       let inline keepGoingIfSucceed next =
@@ -498,8 +501,10 @@ module App =
             ]
 
       | AndThen (ConvertToEsc (user, upds, next)) ->
-          convertToEsc user db cfg srv.EscRepository upds
-          |> keepGoingIfSucceed next
+          request (fun req ->
+            convertToEsc user db cfg srv.EscRepository upds (req |> externalHost |> Uri)
+            |> keepGoingIfSucceed next
+          )
       
       | AndThen (PrepareToInstall (user, upds, next)) ->
           match prepareToInstall user db upds with
