@@ -18,9 +18,10 @@ module Program =
       // default bind to 127.0.0.1:8080
       { IP = System.Net.IPAddress.Loopback
         Port = 8080us
-        UpdBaseUri    = Uri (env "UPD_BASE_URI"     |> Choice.orDefault "http://test-mapteka-updater.itapteka.loc/upd/")
+        StaticBaseUri = Uri (env "STATIC_BASE_URI"  |> Choice.orDefault "http://test-mapteka-updater.itapteka.loc/")
         EscConvertUri = Uri (env "ESC_CONVERT_URI"  |> Choice.orDefault "http://w7-grishin:1972/csp/updaptservice/User.UpdAptToEscService.cls")
-        EscUriPrefix  = Uri (env "ESC_URI_PREFIX"   |> Choice.orDefault "http://test-mapteka-updater.itapteka.loc/esc/")
+        EscExternalScheme 
+                      = env "ESC_EXT_SCHEME" |> Choice.orDefault "http"
       }
     
     // parse arguments
@@ -36,14 +37,14 @@ module Program =
         | "--ip" :: IPAddress ip :: xs -> parseArgs { config with IP = ip } xs
         | "--port" :: Port p :: xs -> parseArgs { config with Port = p } xs
         | "--esc-convert-uri" :: escUriPrefix :: xs -> parseArgs { config with EscConvertUri = Uri escUriPrefix } xs
-        | "--esc-uri-prefix" :: escUriPrefix :: xs -> parseArgs { config with EscUriPrefix = Uri escUriPrefix } xs
+        // | "--esc-uri-prefix" :: escUriPrefix :: xs -> parseArgs { config with EscUriPrefix = Uri escUriPrefix } xs
         | invalidArgs ->
             printfn "error: invalid arguments %A" invalidArgs
             printfn "Usage:"
             printfn "    --ip               ADDRESS ip address (Default: %O)" defaultConfig.IP
             printfn "    --port             PORT    port (Default: %i)" defaultConfig.Port
             printfn "    --esc-convert-uri  URI     uri (Default: %O)" defaultConfig.EscConvertUri
-            printfn "    --esc-uri-prefix   URI     uri (Default: %O)" defaultConfig.EscUriPrefix
+            // printfn "    --esc-uri-prefix   URI     uri (Default: %O)" defaultConfig.EscUriPrefix
             exit 1
       in
         argv |> List.ofArray |> parseArgs defaultConfig
@@ -54,8 +55,7 @@ module Program =
     // resolve dependecies here...
     
     let services : App.Services =
-      { Db = InMemoryDbContext( config.UpdBaseUri,
-                                Uri (env "EXT_UPD_URI" |> Choice.orDefault "http://test-mapteka-updater.itapteka.loc/upd/"))
+      { Db = InMemoryDbContext(config.StaticBaseUri)
         EscRepository =
           { Get = fun cid -> escStorage |> Map.tryFind cid |> (function None -> Ok Seq.empty | Some x -> Ok x)
             Put = fun cid efi updSet fetched ->
