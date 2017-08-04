@@ -242,9 +242,9 @@ module App =
         if not (IO.Directory.Exists TempDir) then
           IO.Directory.CreateDirectory TempDir |> ignore
 
-        let escName = Guid.NewGuid() |> sprintf "%O.esc"
+        let escId = Guid.NewGuid()
 
-        let tempPath = IO.Path.Combine(TempDir, escName)
+        let tempPath = IO.Path.Combine(TempDir, sprintf "%O.esc" escId)
 
         try
           let! maybeStream =
@@ -263,13 +263,13 @@ module App =
                 IO.calculateMd5 zipFileStream
 
               let ub = UriBuilder(cfg.StaticBaseUri)
-              ub.Path <- ub.Path + "esc/" + escName
+              ub.Path <- ub.Path + (sprintf "esc/%O.esc" escId)
 
               let ecsUri = ub.Uri
 
               do! IOHelpers.uploadEsc ecsUri tempZipPath
 
-              return (ecsUri, md5sum)
+              return (escId, md5sum)
 
           | None ->
             return failwith "IOHelpers.downloadEsc returns None.";
@@ -367,12 +367,12 @@ module App =
       |> Map.ofSeq
       |> db.AddToUsers
 
-    let internal acceptDownloading (escRepository: EscRepository) (uri: Uri) userId =
+    let internal acceptDownloading (escRepository: EscRepository) (escId: EscId) userId =
       userId
       |> escRepository.Get
-      <!> Seq.collect (fun (((uri',_) as efi), updSet,_) ->
+      <!> Seq.collect (fun (((escId',_) as efi), updSet,_) ->
           let set' =
-            if uri' = uri
+            if escId' = escId
               then updSet
               else Set.empty
           
@@ -386,7 +386,7 @@ module App =
         | ((_, efi) :: _) as ins ->
             escRepository.Put userId efi (ins |> List.map fst |> Set.ofList) true <!> ignore
       )
-      <!> (fun _ -> ((), uri |> Ok |> AcceptDownloadingMessage))
+      <!> (fun _ -> ((), escId |> Ok |> AcceptDownloadingMessage))
       <?> Error
       <?> ValidationMessage
   
@@ -446,11 +446,7 @@ module App =
 
       | AndThen (ReadEscUri next) ->
           PATCH >=>
-            pathScan "/api/v1/internal/esc/%s" (fun escId ->
-              let ub = UriBuilder(cfg.StaticBaseUri)
-              ub.Path <- ub.Path + "esc/" + escId + ".esc"
-              nextWebPart state (next ub.Uri)
-            )
+            pathScan "/api/v1/internal/esc/%s" (Guid >> next >> nextWebPart state)
       
       | AndThen (ValidateUpdate next) ->
           POST >=>

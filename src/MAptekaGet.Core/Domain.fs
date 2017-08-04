@@ -236,7 +236,9 @@ module Domain =
 
   type Md5Sum = string
 
-  type EscFileInfo = Uri * Md5Sum
+  type EscId = Guid
+
+  type EscFileInfo = EscId * Md5Sum
 
   type AvailableResponse =
     | ListAvailable of EscFileInfo list
@@ -263,7 +265,7 @@ module Domain =
     | ConvertToEscMessage   of ConvertToEscResult
     | PublishMessage        of PublishResult
     | AcceptDownloadingMessage    
-                            of Result<Uri, string>
+                            of Result<EscId, string>
     | UnexpectedError       of string
 
   /// Represents each instruction
@@ -272,7 +274,7 @@ module Domain =
     | ValidateUpdate      of                (Update -> 'next)
     | ReadSpecs           of                (UpdateSpecs -> 'next)
     | ReadUserUpdates     of                (Update Set * CustomerId -> 'next)
-    | ReadEscUri          of                (Uri -> 'next)
+    | ReadEscUri          of                (EscId -> 'next)
     | CheckVersion        of Update       * (Update -> 'next)
     | ResolveDependencies of Update Set   * (Tree<Update> list -> 'next)
     | Publish             of UpdateInfo   * (UpdateInfo -> 'next)
@@ -281,7 +283,7 @@ module Domain =
                                           * (EscFileInfo option -> 'next)
     | PrepareToInstall    of CustomerId * Update Set
                                           * 'next
-    | AcceptDownloading   of CustomerId * Uri
+    | AcceptDownloading   of CustomerId * EscId
                                           * 'next
 
   let private mapInstruction f inst  = 
@@ -297,7 +299,7 @@ module Domain =
     | ConvertToEsc (cid, upds, next)      -> ConvertToEsc (cid, upds, next >> f)
     | PrepareToInstall (cid, upds, next)  -> PrepareToInstall (cid, upds, next |> f)
     | GetAvailableUpdates (user, next)    -> GetAvailableUpdates (user, next >> f)
-    | AcceptDownloading (cid, uri, next) -> AcceptDownloading (cid, uri, next |> f)
+    | AcceptDownloading (cid, escId, next) -> AcceptDownloading (cid, escId, next |> f)
 
   /// Represent the Updater Program
   type UpdaterProgram<'a> = 
@@ -348,8 +350,8 @@ module Domain =
     let availableUpdates cid =
       AndThen (GetAvailableUpdates (cid, Stop))
 
-    let acceptDownloading cid upd =
-      AndThen (AcceptDownloading (cid, upd, Stop ()))
+    let acceptDownloading cid escId =
+      AndThen (AcceptDownloading (cid, escId, Stop ()))
 
     let ignore _ = Stop ()
 
