@@ -114,6 +114,10 @@ module DataAccess =
           use data =
             new StreamContent(stream)
 
+          let! response = hc.PutAsync (uri, data) |> Async.AwaitTask
+
+          response.EnsureSuccessStatusCode() |> ignore
+
           lookupSet <- (Map.add upd updspecs) lookupSet
           return upd
         }
