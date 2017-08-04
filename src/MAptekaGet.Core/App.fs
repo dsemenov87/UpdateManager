@@ -305,7 +305,7 @@ module App =
           let lst =
             res
             |> List.ofSeq
-            |> List.map (fun (eid,_,_) -> Uri (externalHost + eid.ToString("N") + ".esc"), eid)
+            |> List.map (fun (eid,_,_) -> Uri (externalHost + "/esc/" + eid.ToString("N").ToUpper() + ".esc"), eid)
           in
             lst, lst |> ListAvailable |> AvailableMessage
         )
@@ -486,11 +486,9 @@ module App =
           let handle reqToBody =
             request (fun req ->
               let (Issuer customerId) = user
-              let externalHost =
-                sprintf "%s://%s" cfg.EscExternalScheme req.clientHostTrustProxy
               in
                 customerId
-                |> availableUpdates db externalHost srv.EscRepository (reqToBody req)
+                |> availableUpdates db (externalHost req) srv.EscRepository (reqToBody req)
                 |> thenIfSucceedAsync state next nextWebPart
             )
 
@@ -502,7 +500,7 @@ module App =
 
       | AndThen (ConvertToEsc (user, upds, next)) ->
           request (fun req ->
-            convertToEsc user db cfg srv.EscRepository upds (req |> externalHost |> Uri)
+            convertToEsc user db cfg srv.EscRepository upds (externalHost req)
             |> keepGoingIfSucceed next
           )
       

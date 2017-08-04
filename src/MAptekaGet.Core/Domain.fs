@@ -358,7 +358,7 @@ module Domain =
     
     let escFileInfoToJson ((uri, md5): EscFileInfo) =
       [ ("Url", string uri)
-        ("Hash", md5.ToString("N"))
+        ("Hash", md5.ToString("N").ToUpper())
       ]
       |> Map.ofList
       |> JsonObject.ofMapWith Json.String
