@@ -23,6 +23,8 @@ module App =
   module Rep  = Reporting
   module UP   = UpdaterProgram
 
+  type NEL<'a> = NonEmptyList<'a>
+
   Text.Encoding.RegisterProvider(Text.CodePagesEncodingProvider.Instance); // we need win-1251 sometimes...
 
   type Config =
@@ -108,24 +110,21 @@ module App =
         else
           ()
 
-      let downloadEsc (updUris: Uri list) (escConvertUri: Uri) customerId tempFilePath = async {
-        match updUris with
-        | [] ->
-          return None
-
-        | updUri :: _ ->
+      let downloadEsc (updUris: NEL<Uri>) (escConvertUri: Uri) customerId =
+        async {
           use downloader = new Http.HttpClient()
 
-          printfn "Host: %A" updUri.Host;
-          printfn "PathAndQuery: %A" updUri.PathAndQuery;
+          printfn "Host: %A" updUris.Head.Host;
+          printfn "PathAndQuery: %A" updUris.Head.PathAndQuery;
 
           use formContent =
             new Http.FormUrlEncodedContent
-              ([  KeyValuePair("MailParticipantID", customerId)
-                  KeyValuePair("StorageUrl", updUri.Host)
-                  // KeyValuePair("PathUPD", updUri.PathAndQuery)
-              ] @ (updUris |> List.map (fun uri -> KeyValuePair("PathUPD", uri.PathAndQuery)))
-              )
+              (seq {
+                yield KeyValuePair("MailParticipantID", customerId)
+                yield KeyValuePair("StorageUrl", updUris.Head.Host)
+                for uri in updUris do
+                  yield KeyValuePair("PathUPD", uri.PathAndQuery)
+              })
           
           let! response =
             downloader.PostAsync(escConvertUri, formContent) |> Async.AwaitTask
@@ -139,20 +138,8 @@ module App =
             use errms = new IO.MemoryStream()
             do! IO.copyData responseStream errms;
             failwith (Text.Encoding.GetEncoding(1251).GetString (errms.ToArray()))
-          
-          clearFileTemp tempFilePath;
 
-          let mutable maybeStream : IO.Stream option = None
-          try
-            let fs = IO.File.Open(tempFilePath, IO.FileMode.CreateNew, IO.FileAccess.ReadWrite)
-            maybeStream <- Some (fs :> IO.Stream)
-            do! IO.copyData responseStream fs;
-            fs.Position <- 0L;
-            return maybeStream
-          with _ ->
-            do
-              match maybeStream with Some stream -> stream.Dispose(); | _ -> ();
-            return None
+          return responseStream
       }
 
     let inline thenIfSucceed (state: HttpInterpreterState) next f = function
@@ -229,39 +216,35 @@ module App =
           |> Seq.map (fun upd -> db.GetUpdateUri upd externalHost)
           |> Async.Parallel
         
-        match Option.sequence maybeUpdInfo with
+        match maybeUpdInfo |> Option.sequence |> Option.map Seq.toList with
         | None ->
             return upds |> ConvertionSourceNotFound |> ConvertToEscMessage |> Error
 
-        | Some s when Seq.isEmpty s ->
+        | Some [] ->
             return EmptyUpdateList |> ConvertToEscMessage |> Error
         
-        | Some updUris ->
+        | Some (updUri :: rest) ->
             if not (IO.Directory.Exists TempDir) then
               IO.Directory.CreateDirectory TempDir |> ignore
 
             let tempPath = IO.Path.Combine(TempDir, sprintf "%O.esc" (Guid.NewGuid()))
             try
-              let! maybeStream =
-                IOHelpers.downloadEsc (Seq.toList updUris) escConvertUri customerId tempPath
+              use! stream =
+                IOHelpers.downloadEsc (NEL.create updUri rest) escConvertUri customerId
+              
+              let tempZipPath = tempPath + ".zip"
+              let entryName = (IO.FileInfo tempPath).Name
 
-              match maybeStream with
-              | Some stream ->  
-                let tempZipPath = tempPath + ".zip"
-                do!
-                  use tmpFileStream = stream 
-                  let entryName = (IO.FileInfo tempPath).Name
-                  IO.compressFileToZip entryName tmpFileStream tempZipPath
+              IOHelpers.clearFileTemp tempPath;
+              
+              do! IO.compressFileToZip entryName stream tempZipPath
 
-                use zipStream = IO.File.OpenRead tempZipPath
-                let! eid = escRepository.Create customerId upds (zipStream :> IO.Stream)
+              use zipStream = IO.File.OpenRead tempZipPath
+              let! eid = escRepository.Create customerId upds (zipStream :> IO.Stream)
 
-                let escUri = escRepository.GetDownloadLink eid externalHost
+              let escUri = escRepository.GetDownloadLink eid externalHost
 
-                return Ok ((escUri, eid), (upds, eid) |> Converted |> ConvertToEscMessage)
-
-              | None ->
-                  return failwith "IOHelpers.downloadEsc returns None.";
+              return Ok ((escUri, eid), (upds, eid) |> Converted |> ConvertToEscMessage)
             
             finally
               IOHelpers.clearFileTemp tempPath;
