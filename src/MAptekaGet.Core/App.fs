@@ -35,7 +35,7 @@ module App =
     }
   
   type Services =
-    { Db            : IDbContext
+    { UpdRepository : UpdRepository
       EscRepository : EscRepository
     }
 
@@ -155,15 +155,6 @@ module App =
             return None
       }
 
-      let uploadEsc (ecsUri: Uri) tempZipPath = async {
-        use uploader = new Http.HttpClient()
-        use tmpZipFileStream = IO.File.OpenRead tempZipPath
-        use uploadContent = new Http.StreamContent(tmpZipFileStream)
-        
-        let! response = uploader.PutAsync(ecsUri, uploadContent) |> Async.AwaitTask
-        response.EnsureSuccessStatusCode |> ignore
-      }
-
     let inline thenIfSucceed (state: HttpInterpreterState) next f = function
       | Ok (x, dmsg) ->
           f ({state with Message = dmsg}) (next x)
@@ -193,205 +184,180 @@ module App =
       <?> Error
       <?> ValidationMessage
 
-    let checkVersion (db: IDbContext) (upd: Update) =
-      match db.GetVersionsByName upd.Name with
-      | Ok upds ->
-          let dmsg = VersionCheckMessage 
-          match upds
-              |> Seq.map (fun u -> u.Version) 
-              |> Seq.filter ((>=) upd.Version)
-              |> Seq.sortDescending
-              |> Seq.tryHead with
-          | Some v when upd.Version > v ->
-              Error (dmsg (UnexpectedVersion (upd, v)))
-          
-          | Some v ->
-              Error (dmsg (AlreadyPublished upd))
-          
-          | None ->
-              Ok (upd, dmsg (CorrectVersion upd))
+    let checkVersion (db: UpdRepository) (upd: Update) =
+      async {
+        let! upds = db.GetVersionsByName upd.Name
+        let dmsg = VersionCheckMessage 
+        let checkResult = cheskUpdateVersion upds upd
+        match checkResult with
+        | CorrectVersion _ ->
+            return Ok (upd, dmsg checkResult)
+        
+        | _ ->
+            return Error (dmsg checkResult)
+      }
 
-      | Error err ->
-          failwith err // todo handle accurately
+    let resolveDependencies (db: UpdRepository) (updates: Update seq) =
+      async {
+        let dmsg = ResolutionMessage
+        match Seq.toList updates with
+        | [] ->
+          return Ok ([], dmsg (Solution []))
 
-    let resolveDependencies (db: IDbContext) (updates: Update Set) =
-      let dmsg = ResolutionMessage
-      let res =
-        match Set.toList updates with
-        | [] -> Solution [] |> Ok
         | u::us ->
-            updates
-            |> db.GetDependencies
-            <!> DR.resolve
-            <*> Ok (NEL.create u us)
-      
-      match res with
-      | Ok (Solution tree as sol) ->
-          Ok (tree, dmsg sol)
-      | Ok res ->
-          Error (dmsg res)                                   
-      | Error err ->
-          failwith err
+          let! deps = db.GetDependencies updates
+
+          match DR.resolve deps (NEL.create u us) with
+          | Solution forest as sol ->
+              return Ok (forest, dmsg sol)
+          | res ->
+              return Error (dmsg res)
+      }
 
     let private setMessage msg state =
       {state with Message = msg}
 
-    let uploadEsc (cfg: Config) customerId uris =
+    let convertToEsc
+      (db: UpdRepository)
+      (escRepository: EscRepository)
+      (escConvertUri: Uri)
+      customerId upds externalHost =
       
       async {
-        if not (IO.Directory.Exists TempDir) then
-          IO.Directory.CreateDirectory TempDir |> ignore
+        let! maybeUpdInfo =
+          upds
+          |> Seq.map (fun upd -> db.GetUpdateUri upd externalHost)
+          |> Async.Parallel
+        
+        match Option.sequence maybeUpdInfo with
+        | None ->
+            return upds |> ConvertionSourceNotFound |> ConvertToEscMessage |> Error
 
-        let tempPath = IO.Path.Combine(TempDir, sprintf "%O.esc" (Guid.NewGuid()))
+        | Some s when Seq.isEmpty s ->
+            return EmptyUpdateList |> ConvertToEscMessage |> Error
+        
+        | Some updUris ->
+            if not (IO.Directory.Exists TempDir) then
+              IO.Directory.CreateDirectory TempDir |> ignore
 
-        try
-          let! maybeStream =
-            IOHelpers.downloadEsc uris cfg.EscConvertUri customerId tempPath
+            let tempPath = IO.Path.Combine(TempDir, sprintf "%O.esc" (Guid.NewGuid()))
+            try
+              let! maybeStream =
+                IOHelpers.downloadEsc (Seq.toList updUris) escConvertUri customerId tempPath
 
-          match maybeStream with
-          | Some stream -> 
-              use tmpFileStream = stream 
-              let tempZipPath = tempPath + ".zip"
-              let entryName = (IO.FileInfo tempPath).Name
+              match maybeStream with
+              | Some stream ->  
+                let tempZipPath = tempPath + ".zip"
+                do!
+                  use tmpFileStream = stream 
+                  let entryName = (IO.FileInfo tempPath).Name
+                  IO.compressFileToZip entryName tmpFileStream tempZipPath
 
-              do! IO.compressFileToZip entryName tmpFileStream tempZipPath
+                use zipStream = IO.File.OpenRead tempZipPath
+                let! eid = escRepository.Create customerId upds (zipStream :> IO.Stream)
 
-              let md5sum =
-                use zipFileStream = IO.File.OpenRead tempZipPath
-                (IO.calculateMd5 zipFileStream).ToUpper()
+                let escUri = escRepository.GetDownloadLink eid externalHost
 
-              let ub = UriBuilder(cfg.StaticBaseUri)
-              ub.Path <- ub.Path + "esc/" + md5sum + ".esc"
+                return Ok ((escUri, eid), (upds, eid) |> Converted |> ConvertToEscMessage)
 
-              do! IOHelpers.uploadEsc ub.Uri tempZipPath
-
-              return Guid md5sum
-
-          | None ->
-            return failwith "IOHelpers.downloadEsc returns None.";
-
-        finally
-          IOHelpers.clearFileTemp tempPath;
+              | None ->
+                  return failwith "IOHelpers.downloadEsc returns None.";
+            
+            finally
+              IOHelpers.clearFileTemp tempPath;
+          
       }
-      |> Async.Catch
-      |> Async.RunSynchronously
-      |> Result.ofChoice
-      <?> string
-      <?> UnexpectedError
     
-    let readUserUpdates (db: IDbContext) (form: (string * string option) list) user =
+    let readUserUpdates (db: UpdRepository) (form: (string * string option) list) user =
       form
       |> List.choose snd
       |> Set.ofList
-      |> Seq.map (fun str -> (update <-- str) >>= db.GetUpdate)
-      |> Seq.toList
-      |> Result.sequence
-      <!> (List.map fst >> Set.ofList >> fun upds -> ((upds, user), upds |> Ok |> ValidationMessage))
-      <?> (Error >> ValidationMessage)
+      |> Seq.map (fun str ->
+        (update <-- str)
+        <!> db.HeadUpdate
+        <!> Async.map (Result.ofOption (sprintf "Update '%s' not found" str))
+        |> Result.mapAsync
+        |> Async.map (Result.bind id)
+      )
+      |> Async.Parallel
+      |> Async.map (
+          Seq.toList
+          >> Result.sequence
+          >> Result.map (Seq.map fst >> Set.ofSeq >> fun upds -> ((upds, user), upds |> Ok |> ValidationMessage))
+          >> Result.mapError (Error >> ValidationMessage)
+      )
 
-    let getInstalledUpdatesFromProtocol (db: IDbContext) (data: byte[]) =
-      async {
-        let! protocol = IOHelpers.extractProtocolFromRequest data
-        let uniqueCodes = IOHelpers.extractUniqueCodesFromProtocol protocol
-        return Seq.toList uniqueCodes
-      }
+    let getInstalledUpdatesFromProtocol (db: UpdRepository) =
+      IOHelpers.extractProtocolFromRequest
+      >> Async.map (IOHelpers.extractUniqueCodesFromProtocol >> Seq.toList)
 
-    let availableUpdates (db: IDbContext) externalHost (escRepository: EscRepository) (compressedProtocol: byte[] option) userId =
+    let availableUpdates (db: UpdRepository) externalHost (escRepository: EscRepository) (compressedProtocol: byte[] option) userId =
       let getFromDb () =
-        userId
-        |> escRepository.Get
-        <?> UnexpectedError
-        <!> (fun res ->
-          let lst =
-            res
-            |> List.ofSeq
-            |> List.map (fun (eid,_,_) -> Uri (externalHost + "/esc/" + eid.ToString("N").ToUpper() + ".esc"), eid)
-          in
-            lst, lst |> ListAvailable |> AvailableMessage
+        escRepository.Head userId
+        |> Async.map (
+          Seq.map (fst >> (fun eid -> (escRepository.GetDownloadLink eid externalHost, eid)))
+          >> (fun efis -> let lst = Seq.toList efis in Ok (lst, lst |> ListAvailable |> AvailableMessage))
         )
-      
-      async {
-        match compressedProtocol with
-        | Some bytes ->
-          let! uniqueCodes =
-            getInstalledUpdatesFromProtocol db bytes
-
-          let! res =
-            db.AddUpdatesByUniqueCode (uniqueCodes, userId)
-
-          return
-            match res with
-            | Ok () ->
-                getFromDb ()
-            | Error err ->
-                Error (UnexpectedError err)
-
-        | None ->
-          return getFromDb ()
-      }    
-
-    let convertToEsc (user: CustomerId) (db: IDbContext) (cfg: Config) (escRepository: EscRepository) upds externalHost =
-      printfn "%A" host;
-      
-      if Set.isEmpty upds then
-        Ok (None, ConvertToEscMessage EmptyUpdateList)
-      else
-        upds
-        |> Seq.map (db.GetUpdateUri externalHost)
-        |> Seq.toList
-        |> Result.sequence
-        <?> (fun _ -> upds |> ConvertionSourceNotFound |> ConvertToEscMessage)
-        >>= (fun res ->
-          let res =
-            List.filter (function ({Name=MApteka},_) -> false | _ -> true) res
-
-          let updSet =
-            res |> List.map fst |> Set.ofList
-
-          uploadEsc cfg user (List.map snd res)
-          >>= (fun md5 ->
-            escRepository.Put user md5 updSet false
-            <!> (fun efi -> Some efi, (upds, efi) |> Converted |> ConvertToEscMessage)
-            <?> UnexpectedError
-          )
+      in
+        compressedProtocol
+        |> Option.map (
+          getInstalledUpdatesFromProtocol db
+          >> Async.bind (db.AddUpdatesByUniqueCode userId)
+          >> Async.bind (ignore >> getFromDb)
         )
+        |> Option.defaultValue (getFromDb ())
 
-    let prepareToInstall (user: CustomerId) (db: IDbContext) (upds: Update seq) =
+    // let convertToEsc (user: CustomerId) (db: UpdRepository) (cfg: Config) (escRepository: EscRepository) upds externalHost =
+    //   // printfn "%A" host;
+      
+    //   if Set.isEmpty upds then
+    //     Ok (None, ConvertToEscMessage EmptyUpdateList) |> Async.result
+    //   else
+    //     let f =
+    //       upds
+    //       |> Seq.map (db.GetUpdateUri externalHost)
+    //       |> Seq.toList
+    //       // |> Result.sequence
+    //       // <?> (fun _ -> upds |> ConvertionSourceNotFound |> ConvertToEscMessage)
+    //       // >>= (fun res ->
+    //       //   let res =
+    //       //     List.filter (function ({Name=MApteka},_) -> false | _ -> true) res
+
+    //       //   let updSet =
+    //       //     res |> List.map fst |> Set.ofList
+
+    //       //   uploadEsc cfg user (List.map snd res)
+    //       //   >>= (fun md5 ->
+    //       //     escRepository.Put user md5 updSet false
+    //       //     <!> (fun efi -> Some efi, (upds, efi) |> Converted |> ConvertToEscMessage)
+    //       //     <?> UnexpectedError
+    //       //   )
+    //       // )
+    //   ()
+    let prepareToInstall (user: CustomerId) (db: UpdRepository) (upds: Update seq) =
       user
       |> List.replicate (Seq.length upds)
       |> Seq.zip upds
       |> Map.ofSeq
       |> db.AddToUsers
 
-    let internal acceptDownloading (escRepository: EscRepository) (escId: EscId) userId =
-      userId
-      |> escRepository.Get
-      <!> Seq.collect (fun (eid, updSet,_) ->
-          let set' =
-            if eid = escId
-              then updSet
-              else Set.empty
-          
-          eid
-          |> Seq.replicate (Seq.length set')
-          |> Seq.zip set'
+    let internal acceptDownloading (escRepository: EscRepository) (eid: EscId) user =
+      user
+      |> escRepository.Head
+      |> Async.bind (
+          Seq.filter (fst >> ((=) eid))
+          >> Seq.collect (fun (_,(upds,_)) -> upds)
+          >> Set.ofSeq
+          >> (fun upds -> escRepository.Put user eid upds true)
       )
-      <!> Seq.toList
-      >>= (function
-        | [] -> Ok ()
-        | ((_, efi) :: _) as ins ->
-            escRepository.Put userId efi (ins |> List.map fst |> Set.ofList) true <!> ignore
-      )
-      <!> (fun _ -> ((), escId |> Ok |> AcceptDownloadingMessage))
-      <?> Error
-      <?> ValidationMessage
+      |> Async.map (fun _ -> Ok ((), eid |> Ok |> AcceptDownloadingMessage))
   
   let internal interpretAsWebPart
     (cfg: Config)
     (srv: Services)
     (program: UpdaterProgram<'a>) =
     
-    let db = srv.Db // too often use  
+    let db = srv.UpdRepository // too often use  
   
     let inline fieldOrEmpty name (req: HttpRequest) =
       match req.fieldData name with Choice1Of2 name_ -> name_ | _ -> ""
@@ -402,6 +368,9 @@ module App =
     let rec nextWebPart (state: HttpInterpreterState) program : WebPart =
       let inline keepGoingIfSucceed next =
         thenIfSucceed state next nextWebPart
+
+      let inline keepGoingIfSucceedAsync next =
+        thenIfSucceedAsync state next nextWebPart
 
       match program with
       | Stop _ ->
@@ -425,7 +394,7 @@ module App =
             pathScan "/api/v1/users/%s/updates" (fun userId ->
               request (fun req ->
                 readUserUpdates db req.form userId
-                |> keepGoingIfSucceed next
+                |> keepGoingIfSucceedAsync next
               )
             )
 
@@ -461,11 +430,11 @@ module App =
       | AndThen (CheckVersion (upd, next)) ->
           upd
           |> checkVersion db
-          |> keepGoingIfSucceed next
+          |> keepGoingIfSucceedAsync next
 
       | AndThen (ResolveDependencies (upds, next)) ->
           resolveDependencies db upds
-          |> keepGoingIfSucceed next
+          |> keepGoingIfSucceedAsync next
 
       | AndThen (Publish ((upd, specs), next)) ->
           request (fun req ->
@@ -473,13 +442,10 @@ module App =
             |> List.tryHead
             |> Option.toChoice (upd |> MissingFileBody |> PublishMessage)
             |> Result.ofChoice
-            |> Result.bind (fun file ->
-                use fs = IO.File.OpenRead file.tempFilePath
-                db.Upsert(upd, specs, fs)
-                |> Result.mapError UnexpectedError
-            )
-            |> Result.map (fun u -> ((u, specs), PublishMessage (Published u)))
-            |> keepGoingIfSucceed next
+            |> Result.map (fun file -> db.Upsert upd specs (IO.FileInfo file.tempFilePath))
+            |> Result.mapAsync
+            |> Async.map ^ Result.map (fun _ -> ((upd, specs), PublishMessage (Published upd)))
+            |> keepGoingIfSucceedAsync next
           )
 
       | AndThen (GetAvailableUpdates (user, next)) ->
@@ -488,8 +454,8 @@ module App =
               let (Issuer customerId) = user
               in
                 customerId
-                |> availableUpdates db (externalHost req) srv.EscRepository (reqToBody req)
-                |> thenIfSucceedAsync state next nextWebPart
+                |> availableUpdates db (req |> externalHost |> Uri) srv.EscRepository (reqToBody req)
+                |> keepGoingIfSucceedAsync next
             )
 
           path "/api/v1/updates/available" >=> choose
@@ -500,31 +466,25 @@ module App =
 
       | AndThen (ConvertToEsc (user, upds, next)) ->
           request (fun req ->
-            convertToEsc user db cfg srv.EscRepository upds (externalHost req)
-            |> keepGoingIfSucceed next
+            convertToEsc db srv.EscRepository cfg.EscConvertUri user upds (req |> externalHost |> Uri)
+            |> keepGoingIfSucceedAsync next
           )
       
-      | AndThen (PrepareToInstall (user, upds, next)) ->
-          match prepareToInstall user db upds with
-          | Ok _ -> // todo handle accurately
-              nextWebPart state next
-          | Error err ->
-              failwith err
+      | AndThen (PrepareToInstall (user, upds, next)) -> fun ctx ->
+          prepareToInstall user db upds
+          |> Async.bind (fun _ -> nextWebPart state next ctx)
+          
       
       | AndThen (AcceptDownloading (user, uri, next)) ->
           acceptDownloading srv.EscRepository uri user
-          |> keepGoingIfSucceed (fun _ -> next)
+          |> keepGoingIfSucceedAsync (fun _ -> next)
 
     in // init state
       nextWebPart {Message=Never} program
 
   open Suave.Logging
 
-  let interpretProgram
-    (config: Config)
-    (srv: Services)
-    (cts: System.Threading.CancellationTokenSource)
-    program =
+  let interpretProgram (config: Config) (srv: Services) program =
 
     let logger =
       LiterateConsoleTarget([||], LogLevel.Debug) :> Logger
@@ -553,8 +513,7 @@ module App =
     
     let serverConfig =
       { defaultConfig
-          with  cancellationToken = cts.Token
-                bindings = [ HttpBinding.create HTTP config.IP config.Port ]
+          with  bindings = [ HttpBinding.create HTTP config.IP config.Port ]
                 logger = logger
       }
 

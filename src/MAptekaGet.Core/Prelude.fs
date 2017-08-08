@@ -155,7 +155,25 @@ module Utils =
 
     let ofOption err = function
       | None    -> Error err
-      | Some r  -> Ok r 
+      | Some r  -> Ok r
+
+    let mapAsync res = async {
+      match res with
+      | Error y ->
+          return Error y
+      
+      | Ok x ->
+          let! x' = x
+          return Ok x'
+    } 
+
+  module Option =
+    /// Convert a seq of Options into a Option of a seq
+    let rec sequence options =
+      let consOp = Option.lift2 (fun head tail -> Seq.append (Seq.singleton head) tail)
+      match Seq.tryHead options with
+      | None      -> Some Seq.empty
+      | Some head -> consOp head (options |> Seq.skip 1 |> sequence)
 
   module ResultOp =
     open Result
@@ -197,6 +215,10 @@ module Utils =
       | Success (res,_,_) -> Result.Ok res
       | Failure _         -> Result.Error (sprintf "%A" res)
     
+    let inline parse parser txt = 
+      run parser txt |> toResult
+
+    /// Infix version of parse
     let inline (<--) parser txt =
       run parser txt |> toResult
 
