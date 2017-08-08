@@ -42,7 +42,8 @@ module App =
     }
 
   type private HttpInterpreterState =
-    { Message: DomainMessage
+    { Message     : DomainMessage
+      ExternalUri : Uri
     }
 
   /// classify domain message as WebPart
@@ -236,7 +237,7 @@ module App =
               let entryName = (IO.FileInfo tempPath).Name
 
               IOHelpers.clearFileTemp tempPath;
-              
+
               do! IO.compressFileToZip entryName stream tempZipPath
 
               use zipStream = IO.File.OpenRead tempZipPath
@@ -346,7 +347,7 @@ module App =
       match req.fieldData name with Choice1Of2 name_ -> name_ | _ -> ""
 
     let inline externalHost (req: HttpRequest) =
-      sprintf "%s://%s" cfg.EscExternalScheme req.clientHostTrustProxy
+      sprintf "%s://%s/%s" cfg.EscExternalScheme req.clientHostTrustProxy req.path
 
     let rec nextWebPart (state: HttpInterpreterState) program : WebPart =
       let inline keepGoingIfSucceed next =
@@ -435,10 +436,13 @@ module App =
           let handle reqToBody =
             request (fun req ->
               let (Issuer customerId) = user
+              let externalUri = req |> externalHost |> sprintf "%s/api/v1/" |> Uri
+              let newState =
+                {state with ExternalUri =  externalUri } 
               in
                 customerId
-                |> availableUpdates db (req |> externalHost |> Uri) srv.EscRepository (reqToBody req)
-                |> keepGoingIfSucceedAsync next
+                |> availableUpdates db externalUri srv.EscRepository (reqToBody req)
+                |> thenIfSucceedAsync newState next nextWebPart
             )
 
           path "/api/v1/updates/available" >=> choose
@@ -463,7 +467,7 @@ module App =
           |> keepGoingIfSucceedAsync (fun _ -> next)
 
     in // init state
-      nextWebPart {Message=Never} program
+      nextWebPart {Message=Never; ExternalUri=Uri "http://localhost"} program
 
   open Suave.Logging
 
