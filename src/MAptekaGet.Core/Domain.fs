@@ -224,6 +224,21 @@ module Domain =
     | AlreadyPublished  of Update
     | UnexpectedVersion of Update * Version
 
+  let cheskUpdateVersion lookupSet upd =
+    match lookupSet
+          |> Seq.map (fun u -> u.Version) 
+          |> Seq.filter ((>=) upd.Version)
+          |> Seq.sortDescending
+          |> Seq.tryHead with
+    | Some v when upd.Version > v ->
+        UnexpectedVersion (upd, v)
+    
+    | Some v ->
+        AlreadyPublished upd
+    
+    | None ->
+        CorrectVersion upd
+
   type ResolutionResult =
     | UpdateNotFound          of UpdateName * suggestions:UpdateName list
     | MissingUpdateVersion    of Activation
@@ -278,7 +293,7 @@ module Domain =
     | Publish             of UpdateInfo   * (UpdateInfo -> 'next)
     | GetAvailableUpdates of User         * (EscFileInfo list  -> 'next)
     | ConvertToEsc        of CustomerId * Update Set
-                                          * (EscId option -> 'next)
+                                          * (EscFileInfo -> 'next)
     | PrepareToInstall    of CustomerId * Update Set
                                           * 'next
     | AcceptDownloading   of CustomerId * EscId
