@@ -58,8 +58,11 @@ module App =
     | ResolutionMessage (Solution _)
     | ConvertToEscMessage (Converted _) | ConvertToEscMessage EmptyUpdateList
     | PublishMessage (Published _)
-    | AcceptDownloadingMessage (Ok _) ->
+    | AcceptDownloadingMessage (DownloadAccepted _) ->
         OK (string dmsg) >=> Writers.setMimeType "text/plain"
+
+    | AcceptDownloadingMessage (AcceptingEscNotFound _) ->
+        NOT_FOUND (string dmsg) >=> Writers.setMimeType "text/plain"
 
     | VersionCheckMessage _
     | ResolutionMessage _
@@ -275,21 +278,21 @@ module App =
       IOHelpers.extractProtocolFromRequest
       >> Async.map (IOHelpers.extractUniqueCodesFromProtocol >> Seq.toList)
 
-    let availableUpdates (db: UpdRepository) externalHost (escRepository: EscRepository) (compressedProtocol: byte[] option) userId =
+    let availableUpdates (db: UpdRepository) externalUri (escRepository: EscRepository) (compressedProtocol: byte[] option) userId =
       let getFromDb () =
         escRepository.Head userId
         |> Async.map (
-          Seq.map (fst >> (fun eid -> (escRepository.GetDownloadLink eid externalHost, eid)))
+          Seq.map (fst >> (fun eid -> (escRepository.GetDownloadLink eid externalUri, eid)))
           >> (fun efis -> let lst = Seq.toList efis in Ok (lst, lst |> ListAvailable |> AvailableMessage))
         )
-      in
-        compressedProtocol
-        |> Option.map (
-          getInstalledUpdatesFromProtocol db
-          >> Async.bind (db.AddUpdatesByUniqueCode userId)
-          >> Async.bind (ignore >> getFromDb)
-        )
-        |> Option.defaultValue (getFromDb ())
+
+      compressedProtocol
+      |> Option.map (
+        getInstalledUpdatesFromProtocol db
+        >> Async.bind (db.AddUpdatesByUniqueCode userId)
+        >> Async.bind (ignore >> getFromDb)
+      )
+      |> Option.defaultValue (getFromDb ())
 
     // let convertToEsc (user: CustomerId) (db: UpdRepository) (cfg: Config) (escRepository: EscRepository) upds externalHost =
     //   // printfn "%A" host;
@@ -332,9 +335,18 @@ module App =
           Seq.filter (fst >> ((=) eid))
           >> Seq.collect (fun (_,(upds,_)) -> upds)
           >> Set.ofSeq
-          >> (fun upds -> escRepository.Put user eid upds true)
+          >> (fun upds ->
+            if Set.isEmpty upds then
+              eid
+              |> AcceptingEscNotFound 
+              |> AcceptDownloadingMessage
+              |> Error
+              |> Async.result
+            else
+              escRepository.Put user eid upds true
+              |> Async.map (fun eid -> Ok ((), eid |> DownloadAccepted |> AcceptDownloadingMessage))
+          )
       )
-      |> Async.map (fun _ -> Ok ((), eid |> Ok |> AcceptDownloadingMessage))
   
   let internal interpretAsWebPart
     (cfg: Config)
@@ -438,10 +450,6 @@ module App =
               let (Issuer customerId) = user
               let externalUri = req |> externalHost |> sprintf "%s/api/v1/" |> Uri
               
-              printfn "%O" externalUri
-              eprintfn "%O" externalUri
-
-
               let newState =
                 {state with ExternalUri =  externalUri } 
               in
@@ -450,11 +458,12 @@ module App =
                 |> thenIfSucceedAsync newState next nextWebPart
             )
 
-          path "/api/v1/updates/available" >=> choose
-            [ GET >=> handle (fun _ -> None)
-              
-              POST >=> handle (fun req -> Some req.rawForm)
-            ]
+          path "/api/v1/updates/available" >=>
+            choose
+              [ GET >=> handle (fun _ -> None)
+                
+                POST >=> handle (fun req -> Some req.rawForm)
+              ]
 
       | AndThen (ConvertToEsc (user, upds, next)) ->
           request (fun req ->

@@ -262,6 +262,10 @@ module Domain =
     | Converted                 of Update Set * EscId
     | ConvertionSourceNotFound  of Update Set
 
+  type AcceptDownloadingResult =
+    | AcceptingEscNotFound  of EscId
+    | DownloadAccepted      of EscId
+
   type UpdateInfo = Update * UpdateSpecs
 
   type CustomerId = string
@@ -278,7 +282,7 @@ module Domain =
     | ConvertToEscMessage   of ConvertToEscResult
     | PublishMessage        of PublishResult
     | AcceptDownloadingMessage    
-                            of Result<EscId, string>
+                            of AcceptDownloadingResult
     | UnexpectedError       of string
 
   /// Represents each instruction
@@ -517,6 +521,20 @@ module Domain =
             )
             []
 
+    let acceptingDownloadToPrintMessage (msg: AcceptDownloadingResult) =
+      match msg with
+      | AcceptingEscNotFound (md5) ->
+          Rep.Message.New
+            ( "The accepting *.esc file '" + (md5.ToString("N").ToUpper()) + ".esc' is not found."
+            )
+            []
+
+      | DownloadAccepted (md5) ->
+          Rep.Message.New
+            ( sprintf "*.esc file '%s' downloading is accepted." (md5.ToString("N").ToUpper())
+            )
+            []
+
   type DomainMessage with
 
     override dmsg.ToString () =
@@ -549,8 +567,7 @@ module Domain =
 
         | AcceptDownloadingMessage msg ->
             msg
-            |> Result.map (sprintf "Esc file '%O' downloading is accepted.")
-            |> Rep.resultToMsg
+            |> acceptingDownloadToPrintMessage
             |> Rep.pmsgToDoc
 
         | UnexpectedError err ->
