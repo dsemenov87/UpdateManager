@@ -347,7 +347,7 @@ module App =
       match req.fieldData name with Choice1Of2 name_ -> name_ | _ -> ""
 
     let inline externalHost (req: HttpRequest) =
-      sprintf "%s://%s/%s" cfg.EscExternalScheme req.clientHostTrustProxy req.path
+      sprintf "%s://%s" cfg.EscExternalScheme req.clientHostTrustProxy
 
     let rec nextWebPart (state: HttpInterpreterState) program : WebPart =
       let inline keepGoingIfSucceed next =
@@ -437,6 +437,11 @@ module App =
             request (fun req ->
               let (Issuer customerId) = user
               let externalUri = req |> externalHost |> sprintf "%s/api/v1/" |> Uri
+              
+              printfn "%O" externalUri
+              eprintfn "%O" externalUri
+
+
               let newState =
                 {state with ExternalUri =  externalUri } 
               in

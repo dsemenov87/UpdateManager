@@ -34,6 +34,9 @@ module DataAccess =
     let getEscUri (baseUri: Uri) (eid: EscId) =
       let ub = UriBuilder baseUri
       ub.Path <- ub.Path + "esc/" + eid.ToString("N").ToUpper() + ".esc"
+
+      printfn "%A" ub.Uri        
+
       ub.Uri
     
     let headEscByCustomerId cid =
