@@ -4,7 +4,6 @@ module DataAccess =
   open System
   open System.Collections.Generic
   open System.Net.Http
-  open ResultOp
 
   type UpdRepository =
     { HeadUpdate            : Update      -> Async<Option<Update * UpdateSpecs>>
@@ -13,6 +12,7 @@ module DataAccess =
       AddUpdatesByUniqueCode: CustomerId  -> string list -> Async<unit>
       GetVersionsByName     : UpdateName  -> Async<Update Set>
       GetDependencies       : Update seq  -> Async<Update Set>
+      GetAll                : unit        -> Async<Update Set>
       Upsert                : Update      -> UpdateSpecs -> IO.FileInfo -> Async<Update>
       AddToUsers            : Map<Update, CustomerId>
                                           -> Async<Map<Update, CustomerId>>
@@ -33,10 +33,7 @@ module DataAccess =
     
     let getEscUri (baseUri: Uri) (eid: EscId) =
       let ub = UriBuilder baseUri
-      ub.Path <- ub.Path + "esc/" + eid.ToString("N").ToUpper() + ".esc"
-
-      printfn "%A" ub.Uri        
-
+      ub.Path <- ub.Path + "esc/" + eid.ToString("N").ToUpper() + ".esc"       
       ub.Uri
     
     let headEscByCustomerId cid =
@@ -239,5 +236,12 @@ module DataAccess =
             if not (Map.containsKey upd installed) then
               installed <- Map.add upd true installed
         )
+        |> Async.result
+
+      GetAll = fun () ->
+        lookupSet
+        |> Map.toList
+        |> List.map fst
+        |> Set.ofList
         |> Async.result
     }

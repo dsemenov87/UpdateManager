@@ -7,6 +7,7 @@ open Xunit
 open Xunit.Sdk
 open NHamcrest
 open NHamcrest.Core
+open MAptekaGet.Utils.Either
 
 module CustomMatchers =
   open System.Collections
@@ -239,15 +240,15 @@ let inline should (f : 'a -> ^b) x (y : obj) =
   else
     Assert.That(y, c)
 
-let inline shouldSucceed (y : Result< 'T, 'TError>) =
+let inline shouldSucceed (y : Choice< 'T, 'TError>) =
   match y with
-  | Ok y'   -> y'
-  | Error _ -> raise (MatchException("Method should succeed", "Returned Error", null)) 
+  | Right y'   -> y'
+  | Left _ -> raise (MatchException("Method should succeed", "Returned Error", null)) 
 
-let inline shouldFail (y : Result< 'T, 'TError>) =
+let inline shouldFail (y : Choice< 'T, 'TError>) =
   match y with
-  | Error y'-> y'
-  | Ok _    -> raise (MatchException("Method should fail", "Returned Ok", null)) 
+  | Left y'-> y'
+  | Right _    -> raise (MatchException("Method should fail", "Returned Ok", null)) 
 
 
 let inline shouldRaiseException (f:unit->unit) =

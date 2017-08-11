@@ -8,9 +8,41 @@ open Suave.Utils
 module Program =
   open DataAccess
   open Domain.Operations
+  open Parsing
 
   module UP = UpdaterProgram
 
+  // [<EntryPoint>]
+  // let main _ =
+
+    // let newUpdate name major minor patch =
+    //   { Name        = UpdateName name
+    //     Version     = {Major=major; Minor=minor; Patch=patch;}
+    //     Constraints = []
+    //   }
+
+    // let ``common_nskPricingCheck``num =
+    //   newUpdate "common_nskPricingCheck" 0u num 0u
+
+    // let target =
+    //   ``common_nskPricingCheck`` 33u
+
+    // [ ``common_nskPricingCheck`` 34u ]
+    // |> Seq.map (fun u -> u.Version) 
+    // |> Seq.filter ((<=) target.Version)
+    // |> Seq.sortDescending
+    // |> Seq.tryHead
+    // |> (fun x -> target.Version > v ->
+    //     UnexpectedVersion (upd, v)
+    
+    // | Some v ->
+    //     AlreadyPublished upd
+    
+    // | None ->
+    //     CorrectVersion upd
+
+    // 0
+  
   [<EntryPoint>]
   let main argv =
 
@@ -62,20 +94,63 @@ module Program =
         EscRepository = inMemoryEscRepository staticBaseUri
       }
 
-    let program =
+    let program = updater {
+      let! user = UP.authorize
+
+      let publish = updater {
+        let! newUpdate = UP.readUpdate
+        let! specs = UP.readSpecs
+        let! newUpdate = UP.checkVersion newUpdate
+        do! UP.resolveDependencies (Set.singleton newUpdate) >>= UP.ignore
+        do! UP.publish (newUpdate, specs) >>= UP.ignore
+      }
+
+      let listAvailable = UP.availableUpdates user >>= UP.ignore
+
+      let prepareToUnstall = updater {
+        let! (updates, target) = UP.readUserUpdates
+        let! depsTree = UP.resolveDependencies updates
+        let deps = depsTree |> Seq.collect Tree.toSeq |> Seq.distinct
+        do! UP.convertToEsc target deps >>= UP.ignore
+        do! UP.prepareToInstall target updates >>= UP.ignore
+      }
+
+      let acceptDownloading = updater {
+        let! escUri = UP.readEscUri
+        let (Issuer customerId) = user
+        do! UP.acceptDownloading customerId escUri
+      }
+
+      do! UP.choose
+            [ publish
+              listAvailable
+              prepareToUnstall
+              acceptDownloading
+            ]
+    }
+    
+    let program1 =
       UP.authorize >>= (fun user ->
-        UP.choice
-          [ UP.validateUpdate >>= (fun upd ->
+        UP.choose
+          [ UP.readUpdate >>= (fun upd ->
               UP.readSpecs >>= (fun specs ->
-                upd |> UP.checkVersion >>= (fun _ -> UP.publish (upd, specs) >>= UP.ignore)
+                upd
+                |> UP.checkVersion
+                >>= (Set.singleton >> UP.resolveDependencies)
+                >>= (fun _ -> UP.publish (upd, specs) >>= UP.ignore)
               )
             )
             
             UP.availableUpdates user >>= UP.ignore
 
-            UP.readUserUpdates >>= (fun (upds, user) ->
-              UP.convertToEsc user upds >>= (fun _ ->
-                UP.prepareToInstall user upds
+            UP.readUserUpdates >>= (fun (updSet, user) ->
+              updSet |> UP.resolveDependencies >>= (
+                Seq.collect Tree.toSeq
+                >> Set.ofSeq
+                >> UP.convertToEsc user
+                >=> (fun _ ->
+                  UP.prepareToInstall user updSet
+                )
               )
             )
 

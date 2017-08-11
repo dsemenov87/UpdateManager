@@ -6,7 +6,6 @@ open MAptekaGet
 open CommonUtils
 
 module DR = DependencyResolution
-module NEL = NonEmptyList
 
 [<Fact>]
 let ``can check if dependency version is missing`` () =
@@ -25,43 +24,12 @@ let ``can check if dependency version is missing`` () =
       upd "http_client-1.0.2"
       upd "http_client-1.0.3"
     ]
-
-  let acts =
-    [ "http_client-1.0.0" 
-      "http_client-1.0.2"
-      "http_client-1.0.3"
-    ]
-    |> List.map (childA << upd)
  
-  DR.resolve lookupSet (NEL.singleton ``ws_client-1.0.0``)
-  |> shouldStrictEquals (MissingUpdateVersion acts)
+  ``ws_client-1.0.0``
+  |> NEL.singleton
+  |> DR.resolve lookupSet
+  |> shouldStrictEquals ^ MissingUpdateVersion (ChildA (upd "http_client-1.0.0", ``http_client = 1.0.5``, InitialA ``ws_client-1.0.0``))
   
-[<Fact>]
-let ``can check if dependency is not found`` () =
-  let ``1.0.5 <= http_cilent <= 1.0.5`` =
-    dep "http_cilent: 1.0.5 <= v <= 1.0.5"
-  
-  let ``ws_client-1.0.0`` =
-    upd "ws_client-1.0.0" |> addConstraint ``1.0.5 <= http_cilent <= 1.0.5``
-  
-  let lookupSet =
-    [ ``ws_client-1.0.0``
-      upd "http_client-1.0.0" 
-      upd "http_client-1.0.2"
-      upd "http_client-1.0.3"
-    ]
-
-  let suggestions =
-    [ UpdateName "ws_client"
-      UpdateName "http_client"
-    ]
-
-  let expected =
-    UpdateNotFound (InitialA ``ws_client-1.0.0``, UpdateName "http_cilent", suggestions)
-
-  DR.resolve lookupSet (NEL.singleton ``ws_client-1.0.0``)
-  |> shouldStrictEquals expected
-
 [<Fact>]
 let ``can check if constraints are incompatible`` () =
   let ``rest_client-1.0.0`` =
@@ -80,7 +48,7 @@ let ``can check if constraints are incompatible`` () =
     ]
 
   let a1 =
-    ChildA (  upd "bytes-1.0.0",
+    ChildA (  upd "bytes-1.0.5",
               dep "bytes: 1.0.5 <= v < 2.0.0",
               ChildA (  upd "network-1.2.2",
                         dep "network: 1.2.2 <= v <= 1.2.2",
@@ -100,7 +68,7 @@ let ``can check if constraints are incompatible`` () =
     |> shouldStrictEquals (IncompatibleConstraints (a2, a1))
 
 [<Fact>]
-let ``if solution exists then returns it't activation`` =
+let ``if solution exists then returns Solution`` () =
   let ``rest_client-0.9.9`` =
     upd "rest_client-0.9.9"
     |> addConstraint ^ dep "http_client: 1.0.0 <= v <= 1.0.0"
@@ -116,16 +84,33 @@ let ``if solution exists then returns it't activation`` =
       upd "bytes-1.0.0"
       upd "bytes-1.0.7"
     ]
-
-  let a =
-    ChildA (  upd "bytes-1.0.0",
-              dep "bytes: 1.0.5 <= v < 2.0.0",
-              ChildA (  upd "network-1.2.2",
-                        dep "network: 1.2.2 <= v <= 1.2.2",
-                        ChildA (  upd "http_client-1.0.1",
-                                  dep "http_client: 1.0.1 <= v <= 1.0.1",
-                                  InitialA ( ``rest_client-0.9.9`` ))))
-
   in
-    DR.resolve lookupSet (NEL.singleton ``rest_client-0.9.9``)
-    |> shouldStrictEquals (ResolutionSuccess [ InitialA ``rest_client-0.9.9``])
+    ``rest_client-0.9.9``
+    |> NEL.singleton
+    |> DR.resolve lookupSet
+    |> (function
+      | Solution _  -> ()
+      | problem     -> failwith (string problem) 
+    )
+
+[<Fact>]
+let ``can suggest clearest 4 names if missing update`` () =  
+  let lookupSet =
+    [
+      upd "http_client-1.0.1"
+      upd "network-1.2.2"
+      upd "common_nskPricingCheck-0.34.0"
+      upd "MApteka-2.27.0"
+      upd "MApteka-2.28.0"
+    ]
+    |> Set.ofList
+
+  upd "apt_ImportDocInt_221_nskPricingCheck-0.34.0"
+  |> addConstraint ^ dep "common_nskPricinkCheck: 0.34.0 <= v <= 0.34.0"
+  |> NEL.singleton
+  |> DR.resolve lookupSet
+  |> (function
+      | UpdateNotFound (  UpdateName "common_nskPricinkCheck", 
+                          ((UpdateName "common_nskPricingCheck" :: _) as sugg)) when sugg.Length = 4 -> ()
+      | others -> failwith (sprintf "%A" others) 
+    )

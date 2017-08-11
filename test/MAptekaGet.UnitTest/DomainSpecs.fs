@@ -5,13 +5,13 @@ open FsUnit.Xunit
 open MAptekaGet
 open MAptekaGet.Domain.Parsing
 open MAptekaGet.Utils.Parsing
-open MAptekaGet.Utils.ResultOp
+open MAptekaGet.Utils.Choice.Infixes
 
 module VersionSpecs =
-
+  
   [<Fact>]
   let ``can parse version strings and print the result``() = 
-    (version <-- "0.1.2") <!> show |> shouldBeSucceed "0.1.2"
+    (version <-- "0.1.2") <!> string |> shouldBeSucceed "0.1.2"
     ((version <-- "1.2.3") |> shouldSucceed).Major |> shouldStrictEquals 1u
     ((version <-- "1.2.3") |> shouldSucceed).Minor |> shouldStrictEquals 2u
     ((version <-- "1.2.3") |> shouldSucceed).Patch |> shouldStrictEquals 3u
@@ -95,6 +95,53 @@ module VersionSpecs =
 
   [<Fact>]
   let ``can parse updates and print the result``() =
-    update <-- "network-2.0.7"    <!> show |> shouldBeSucceed "network-2.0.7"
-    update <-- "network-2.1.3"    <!> show |> shouldBeSucceed "network-2.1.3"
-    update <-- "xml_parser-1.0.0" <!> show |> shouldBeSucceed "xml_parser-1.0.0"
+    update <-- "network-2.0.7"    <!> string |> shouldBeSucceed "network-2.0.7"
+    update <-- "network-2.1.3"    <!> string |> shouldBeSucceed "network-2.1.3"
+    update <-- "xml_parser-1.0.0" <!> string |> shouldBeSucceed "xml_parser-1.0.0"
+
+
+module VersionCheckSpecs =
+  let newUpdate name major minor patch =
+    { Name        = UpdateName name
+      Version     = {Major=major; Minor=minor; Patch=patch;}
+      Constraints = []
+    }
+
+  
+  let ``common_nskPricingCheck-0.32.0`` = newUpdate "common_nskPricingCheck" 0u 32u 0u
+  let ``common_nskPricingCheck-0.33.0`` = newUpdate "common_nskPricingCheck" 0u 33u 0u
+  let ``common_nskPricingCheck-0.34.0`` = newUpdate "common_nskPricingCheck" 0u 34u 0u
+  let ``common_nskPricingCheck-0.35.0`` = newUpdate "common_nskPricingCheck" 0u 35u 0u
+
+  let lookupSet =
+    [ ``common_nskPricingCheck-0.33.0``
+      ``common_nskPricingCheck-0.34.0``
+    ]
+
+  [<Fact>]
+  let ``if version exists then return AlreadyPublished`` () =
+    match ``common_nskPricingCheck-0.34.0``
+          |> checkUpdateVersion lookupSet with
+    | AlreadyPublished _  -> ()
+    | problem           -> failwith ""
+
+  [<Fact>]
+  let ``if version doesn't exists but less then previous should return UnexpectedVersion`` () =
+    match ``common_nskPricingCheck-0.32.0``
+          |> checkUpdateVersion lookupSet with
+    | UnexpectedVersion _  -> ()
+    | problem           -> failwith ""
+
+  [<Fact>]
+  let ``if version greater then previous should succeed`` () =
+    match ``common_nskPricingCheck-0.35.0``
+          |> checkUpdateVersion lookupSet with
+    | CorrectVersion _  -> ()
+    | problem           -> failwith ""
+    
+  
+
+    
+    
+
+  

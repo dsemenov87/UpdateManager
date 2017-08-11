@@ -9,7 +9,6 @@ module Utils =
 
   let inline words (text: string) = text.Split [|' '; '\n'|] |> Array.toList
   let inline lines (text: string) = text.Split [|'\r'; '\n'|] |> Array.toList
-
   let inline (^) x = x
 
   let env name =
@@ -56,7 +55,7 @@ module Utils =
   type NonEmptyList<'t> =
     { Head: 't
       Tail: 't list
-    } 
+    }
 
     interface System.Collections.Generic.IEnumerable<'t> with
       member x.GetEnumerator() =
@@ -66,10 +65,15 @@ module Utils =
       member x.GetEnumerator() =
         let {Head = x; Tail = xs} = x
         in (seq (x::xs)).GetEnumerator() :> System.Collections.IEnumerator
-  
+
+    override this.ToString() =
+      this |> Seq.map (sprintf "%O") |> String.concat ","
+
+  type NEL<'a> = NonEmptyList<'a>
+
   /// Basic operations on NonEmptyList
   [<RequireQualifiedAccess>]
-  module NonEmptyList =
+  module NEL =
     let head nel = let {Head = a; Tail = _} = nel in a
     let tail nel = let           {Tail = a} = nel in a
     let create x xs = {Head = x; Tail = xs}
@@ -119,54 +123,14 @@ module Utils =
   
       Node (x, fromList xs)
 
+    let rec toSeq (Node (a, cs)) =
+      seq {
+        yield a
+        for c in cs do
+          yield! toSeq c
+      }
 
-  module Result =
-    /// apply a wrapped function to a wrapped value
-    let apply fP xP = Result.bind (fun f -> Result.bind (Ok << f) xP ) fP 
-
-    /// lift a two parameter function to Result World
-    let lift2 f xP yP = apply (apply (Ok f) xP) yP
-
-    let applyR fR xR = Result.bind (fun f -> Result.bind f xR ) fR 
-    
-    /// Convert a list of Results into a Result of a list
-    let rec sequence parserList =
-      let consP = lift2 cons
-      match parserList with
-      | []         -> Ok []
-      | head::tail -> consP head (sequence tail)
-
-    /// Convert a NonEmptyList of Results into a Result of a NonEmptyList
-    let rec sequenceNonEmpty {Head=h; Tail=t} =
-      match lift2 cons h (sequence t) with
-      | Error err   -> Error err
-      | Ok []       -> match h with
-                        | Error err -> Error err
-                        | Ok x      -> Ok (NonEmptyList.singleton x)
-      | Ok (x::xs)  -> Ok (NonEmptyList.create x xs)
-
-    let ofChoice = function
-      | Choice1Of2 x -> Ok x
-      | Choice2Of2 y -> Error y
-
-    let toChoice = function
-      | Ok x    -> Choice1Of2 x 
-      | Error y -> Choice2Of2 y 
-
-    let ofOption err = function
-      | None    -> Error err
-      | Some r  -> Ok r
-
-    let mapAsync res = async {
-      match res with
-      | Error y ->
-          return Error y
-      
-      | Ok x ->
-          let! x' = x
-          return Ok x'
-    } 
-
+  
   module Option =
     /// Convert a seq of Options into a Option of a seq
     let rec sequence options =
@@ -174,32 +138,55 @@ module Utils =
       match Seq.tryHead options with
       | None      -> Some Seq.empty
       | Some head -> consOp head (options |> Seq.skip 1 |> sequence)
+  
+  [<AutoOpen>]
+  module Either =
+    let (|Right|Left|) = function Choice1Of2 x -> Right x | Choice2Of2 y -> Left y
 
-  module ResultOp =
-    open Result
+    let Right = Choice1Of2
+    let Left = Choice2Of2
 
-    /// Infix version of Result.bind
-    let inline (>>=) x f = Result.bind f x
-    
-    /// Infix version of Result.map
-    let inline (<!>) x f = Result.map f x
-
-    /// Infix version of Result.mapError
-    let inline (<?>) x f = Result.mapError f x
-    
-    /// infix version of apply
-    let ( <*> ) = apply
-    /// pipeline version of apply
-    let ( <|*> ) fP xP = apply xP fP
-
-    let (>=>) f g x = (f x) >>= g
+    type Either<'left, 'right> = Choice<'left, 'right>
   
   module Choice =
     let rec sequence choices =
       let consC = Choice.lift2 cons
       match choices with
-      | []         -> Choice1Of2 []
+      | []         -> Right []
       | head::tail -> consC head (sequence tail)
+
+    let rec sequenceNonEmpty {Head=h; Tail=t} =
+      match Choice.lift2 cons h (sequence t) with
+      | Left err -> Left err
+      | Right [] ->
+          match h with
+          | Left err -> Left err
+          | Right x  -> Right (NEL.singleton x)
+      
+      | Right (x::xs) -> Right (NEL.create x xs)
+
+    let mapAsync res = async {
+      match res with
+      | Left y -> return Left y
+      | Right x -> let! x' = x in return Right x'
+    }
+
+    module Infixes =
+      /// Infix version of Result.bind
+      let inline (>>=) x f = Choice.bind f x
+      
+      /// Infix version of Result.map
+      let inline (<!>) x f = Choice.map f x
+
+      /// Infix version of Result.mapError
+      let inline (<?>) x f = Choice.mapSnd f x
+      
+      /// infix version of apply
+      let ( <*> ) = Choice.apply
+      /// pipeline version of apply
+      let ( <|*> ) fP xP = Choice.apply xP fP
+
+      let (>=>) f g x = (f x) >>= g 
   
   module Parsing =
     open FParsec
@@ -210,20 +197,16 @@ module Utils =
     /// applies the parser p, ignores the result, and returns x.
     let inline (>>%) p x = p |>> (fun _ -> x)
 
-    let inline toResult res =
+    let inline toChoice res =
       match res with
-      | Success (res,_,_) -> Result.Ok res
-      | Failure _         -> Result.Error (sprintf "%A" res)
+      | Success (res,_,_) -> Right res
+      | Failure _         -> Left (sprintf "%A" res)
     
     let inline parse parser txt = 
-      run parser txt |> toResult
+      run parser txt |> toChoice
 
     /// Infix version of parse
-    let inline (<--) parser txt =
-      run parser txt |> toResult
-
-
-
+    let inline (<--) parser txt = parse parser txt
   
   module Dist =
     /// Computes the restricted Damerau-Levenstein edit distance,
@@ -272,7 +255,7 @@ module Utils =
     
     /// Infix version of restrictedDamerauLevenshteinDistance
     let inline (<-->) x y =
-      restrictedDamerauLevenshteinDistance (x.ToString()) (y.ToString())
+      restrictedDamerauLevenshteinDistance (string x) (string y)
 
   module PrettyPrint = 
     // Copyright (C) by Vesa Karvonen
@@ -600,11 +583,11 @@ module Utils =
         <^> line
         <^> line
 
-    let inline resultToMsg res =
+    let inline choiceToMsg res =
       let msg =
         match res with
-        | Result.Ok res -> string res
-        | Result.Error err -> string err
+        | Choice1Of2 res -> string res
+        | Choice2Of2 err -> string err
       in
         Message.New "" [txt msg]
 

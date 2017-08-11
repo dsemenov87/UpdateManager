@@ -7,7 +7,6 @@ module Domain =
   open System
   open System.Collections.Generic
   
-  module NEL = NonEmptyList
   module Rep = Utils.Reporting
   
   /// Semantic Version implementation
@@ -70,10 +69,10 @@ module Domain =
     | Range (vL, opL, opR, vR) ->
       (isLess opL vL version) && (isLess opR version vR) 
   
-  type VDisjunction = VersionConstraint list
+  type VDisjunction = NEL<VersionConstraint>
   
   let isDisjunctionCompatible (version: Version) =
-    List.exists (verifies version)
+    Seq.exists (verifies version)
 
   type UpdateName =
     | UpdateName of string
@@ -189,8 +188,9 @@ module Domain =
     let versionDisjunction: Parser<VDisjunction,unit> =
       let delimiter =
         pchar ',' .>> spaces
-      in
-        sepBy1 versionConstraint delimiter
+      
+      sepBy1 versionConstraint delimiter
+      |>> (function [] -> failwith "can't be" | x::xs -> NEL.create x xs)
 
     let updateName =
       let letter = digit
@@ -219,25 +219,33 @@ module Domain =
       sepBy1 dependency rf
    
 
+  type ReadUpdateResult =
+    | InvalidUpdate       of string
+    | InvalidConstraints  of string
+    | ValidUpdates        of Update Set
+
   type VersionCheckResult =
     | CorrectVersion    of Update
     | AlreadyPublished  of Update
     | UnexpectedVersion of Update * Version
 
-  let cheskUpdateVersion lookupSet upd =
-    match lookupSet
-          |> Seq.map (fun u -> u.Version) 
-          |> Seq.filter ((>=) upd.Version)
-          |> Seq.sortDescending
-          |> Seq.tryHead with
-    | Some v when upd.Version > v ->
-        UnexpectedVersion (upd, v)
-    
-    | Some v ->
+  let checkUpdateVersion lookupSet target =
+    match Seq.tryFind ((=) target) lookupSet with
+    | Some upd ->
         AlreadyPublished upd
-    
+
     | None ->
-        CorrectVersion upd
+        match lookupSet
+              |> Seq.filter (updName >> ((=) target.Name))
+              |> Seq.map (fun u -> u.Version) 
+              |> Seq.filter ((<) target.Version)
+              |> Seq.sortDescending
+              |> Seq.tryHead with
+        | Some v ->
+            UnexpectedVersion (target, v)
+        
+        | None ->
+            CorrectVersion target
 
   type ResolutionResult =
     | UpdateNotFound          of UpdateName * suggestions:UpdateName list
@@ -259,8 +267,9 @@ module Domain =
 
   type ConvertToEscResult =
     | EmptyUpdateList
-    | Converted                 of Update Set * EscId
     | ConvertionSourceNotFound  of Update Set
+    | DependsOnUnavailable      of Update Set
+    | Converted                 of Update Set * EscId
 
   type AcceptDownloadingResult =
     | AcceptingEscNotFound  of EscId
@@ -275,7 +284,7 @@ module Domain =
 
   type DomainMessage =
     | Never
-    | ValidationMessage     of Result<Update Set, string>
+    | ReadUpdateMessage     of ReadUpdateResult
     | VersionCheckMessage   of VersionCheckResult
     | ResolutionMessage     of ResolutionResult
     | AvailableMessage      of AvailableResponse
@@ -288,15 +297,15 @@ module Domain =
   /// Represents each instruction
   type UpdaterInstruction<'next> =
     | Authorize           of                (User -> 'next)
-    | ValidateUpdate      of                (Update -> 'next)
+    | ReadUpdate          of                (Update -> 'next)
     | ReadSpecs           of                (UpdateSpecs -> 'next)
     | ReadUserUpdates     of                (Update Set * CustomerId -> 'next)
     | ReadEscUri          of                (EscId -> 'next)
     | CheckVersion        of Update       * (Update -> 'next)
     | ResolveDependencies of Update Set   * (Tree<Update> list -> 'next)
     | Publish             of UpdateInfo   * (UpdateInfo -> 'next)
-    | GetAvailableUpdates of User         * (EscFileInfo list  -> 'next)
-    | ConvertToEsc        of CustomerId * Update Set
+    | GetAvailableUpdates of User         * ((EscFileInfo * Set<Update>) list  -> 'next)
+    | ConvertToEsc        of CustomerId * Update seq
                                           * (EscFileInfo -> 'next)
     | PrepareToInstall    of CustomerId * Update Set
                                           * 'next
@@ -305,18 +314,18 @@ module Domain =
 
   let private mapInstruction f inst  = 
     match inst with
-    | Authorize next                      -> Authorize (next >> f)
-    | ValidateUpdate next                 -> ValidateUpdate (next >> f)
-    | ReadSpecs next                      -> ReadSpecs (next >> f)
-    | ReadUserUpdates next                -> ReadUserUpdates (next >> f)
-    | ReadEscUri next                     -> ReadEscUri (next >> f)
-    | CheckVersion (input, next)          -> CheckVersion (input, next >> f)
-    | ResolveDependencies (upds, next)    -> ResolveDependencies (upds, next >> f) 
-    | Publish (ui, next)                  -> Publish (ui, next >> f)
-    | ConvertToEsc (cid, upds, next)      -> ConvertToEsc (cid, upds, next >> f)
-    | PrepareToInstall (cid, upds, next)  -> PrepareToInstall (cid, upds, next |> f)
-    | GetAvailableUpdates (user, next)    -> GetAvailableUpdates (user, next >> f)
-    | AcceptDownloading (cid, escId, next) -> AcceptDownloading (cid, escId, next |> f)
+    | Authorize next                        -> Authorize (next >> f)
+    | ReadUpdate next                       -> ReadUpdate (next >> f)
+    | ReadSpecs next                        -> ReadSpecs (next >> f)
+    | ReadUserUpdates next                  -> ReadUserUpdates (next >> f)
+    | ReadEscUri next                       -> ReadEscUri (next >> f)
+    | CheckVersion (input, next)            -> CheckVersion (input, next >> f)
+    | ResolveDependencies (upds, next)      -> ResolveDependencies (upds, next >> f) 
+    | Publish (ui, next)                    -> Publish (ui, next >> f)
+    | ConvertToEsc (cid, upds, next)        -> ConvertToEsc (cid, upds, next >> f)
+    | PrepareToInstall (cid, upds, next)    -> PrepareToInstall (cid, upds, next |> f)
+    | GetAvailableUpdates (user, next)      -> GetAvailableUpdates (user, next >> f)
+    | AcceptDownloading (cid, escId, next)  -> AcceptDownloading (cid, escId, next |> f)
 
   /// Represent the Updater Program
   type UpdaterProgram<'a> = 
@@ -332,7 +341,7 @@ module Domain =
       | AndThen instruction -> AndThen (mapInstruction (bind f) instruction)
 
     let inline orElse p1 p2 = OrElse (p1, p2)
-    let inline choice progs = Seq.reduce orElse progs 
+    let inline choose progs = Seq.reduce orElse progs 
 
     let authorize =
       AndThen (Authorize (Stop))
@@ -346,8 +355,8 @@ module Domain =
     let readEscUri =
       AndThen (ReadEscUri (Stop))
 
-    let validateUpdate =
-      AndThen (ValidateUpdate (Stop))    
+    let readUpdate =
+      AndThen (ReadUpdate (Stop))    
 
     let checkVersion input =
       AndThen (CheckVersion (input, Stop))
@@ -371,6 +380,13 @@ module Domain =
       AndThen (AcceptDownloading (cid, escId, Stop ()))
 
     let ignore _ = Stop ()
+
+  type UpdaterProgramBuilder() =
+    member this.Return(x) = Stop x
+    member this.Bind(x,f) = UpdaterProgram.bind f x
+    member this.Zero(x) = Stop ()
+
+  let updater = UpdaterProgramBuilder()
 
   module internal Json =
     open Chiron
@@ -412,11 +428,32 @@ module Domain =
             |> NEL.reverse
         |> Tree.fromNonEmptyList
 
+    let readUpdateResultToPrintMessage (msg: ReadUpdateResult) =
+      match msg with
+      | InvalidUpdate problem ->
+          Rep.Message.New
+            ( "Update name format is invalid:"
+            )
+            [ txt problem ]
+
+      | InvalidConstraints problem ->
+          Rep.Message.New
+            ( "Constraints format is invalid:"
+            )
+            [ txt problem ]
+
+      
+      | ValidUpdates _ ->
+          Rep.Message.New
+            ( "Validated."
+            )
+            []
+    
     let publishResultToPrintMessage (msg: PublishResult) =
       match msg with
       | Published upd ->
           Rep.Message.New
-            ( sprintf "Update %O is published." upd
+            ( sprintf "Update '%O' is published." upd
             )
             []
       
@@ -444,10 +481,10 @@ module Domain =
     let resolutionToPrintMessage (msg: ResolutionResult) =
       match msg with
       | Solution forest ->
-        Rep.Message.New
-          ( "The update dependencies:"
-          )
-          ( forest |> List.map (Tree.map string >> Rep.drawTree))
+          Rep.Message.New
+            ( "The update dependencies:"
+            )
+            ( forest |> List.map (Tree.map string >> Rep.drawTree))
           
 
       | UpdateNotFound (updName, suggestions) ->
@@ -501,6 +538,12 @@ module Domain =
             )
             []
 
+      | DependsOnUnavailable upds ->
+          Rep.Message.New
+            ( sprintf "Cannot pack into *.esc file unavailable updates: %A." (updsToPrintForm upds)
+            )
+            []
+
     let versionCheckToPrintMessage (msg: VersionCheckResult) =
       match msg with
       | CorrectVersion upd ->
@@ -542,11 +585,8 @@ module Domain =
         match dmsg with
         | Never -> Rep.Message.Zero |> Rep.pmsgToDoc
         
-        | ValidationMessage msg ->
-            msg
-            |> Result.map (sprintf "%A.")
-            |> Rep.resultToMsg
-            |> Rep.pmsgToDoc
+        | ReadUpdateMessage msg ->
+            readUpdateResultToPrintMessage msg |> Rep.pmsgToDoc
 
         | ResolutionMessage resmsg ->       
             resolutionToPrintMessage resmsg |> Rep.pmsgToDoc
@@ -578,4 +618,6 @@ module Domain =
       
   module Operations =
     let inline (>>=) x f = UpdaterProgram.bind f x 
+
+    let (>=>) f g x = (f x) >>= g
  

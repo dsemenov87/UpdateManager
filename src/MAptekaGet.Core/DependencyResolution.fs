@@ -2,8 +2,6 @@ namespace MAptekaGet
 
 module DependencyResolution =
   open Dist
-  type NEL<'a> = NonEmptyList<'a>
-  module NEL = NonEmptyList
 
   type State = Activation * Activation list
 
@@ -44,10 +42,13 @@ module DependencyResolution =
         (List.allPairs [a'] v.Constraints) @ cs
       in
         Node ((a', a'::acts), (buildTree (a'::acts) nextConstrs))
+
     let { Head = head; Tail = tail } =
       NEL.map InitialA initials
+    
     let acts =
       head :: tail
+    
     let initConstraints =
       initials
       |> Seq.collect (fun upd -> upd.Constraints)
@@ -91,7 +92,10 @@ module DependencyResolution =
                   | Some parentAct when (activationUpdate parentAct) = (activationUpdate depAct) ->
                       Some (Primary act)
                   | _ ->
-                      Some (Secondary (a, ChildA (update, constr, depAct)))
+                      let (Dependency (_,{Head=(Range (lowestVersion,_,_,_))})) = constr
+                      let fakeUpdate = // to show in tree
+                        {Name=updName;Constraints=[];Version=lowestVersion}
+                      Some (Secondary (a, ChildA (fakeUpdate, constr, depAct)))
 
   let private labelInconsistent (state: State) =
     (state, firstConflict state (List.rev (stateConstraints state)))  
@@ -124,7 +128,7 @@ module DependencyResolution =
       )
       |> List.length
   
-  let private nearbyNames (target: UpdateName) (allUpdates: Update Set) : UpdateName seq =
+  let nearbyNames (target: UpdateName) (allUpdates: Update Set) : UpdateName seq =
     allUpdates
     |> Set.map (fun upd -> (target <--> upd.Name, upd.Name))
     |> Seq.sortBy fst
@@ -156,19 +160,21 @@ module DependencyResolution =
                 activationParent act |> Option.bind (findNotFounded (shift + 1))
             | Some (Dependency (constrUpdName,_)) ->
                 Some constrUpdName
-
-          let suggestions =
-            nearbyNames (activationUpdate act).Name allUpdates
           
           match findNotFounded 0 act with
           | None ->
               failwith "findNotFounded can't be None when levelOfIncompletition > 0."
           | Some constrUpdName ->
-              UpdateNotFound (constrUpdName, Seq.toList suggestions)
+              let suggestions =
+                nearbyNames constrUpdName allUpdates |> Seq.toList
+              in
+                UpdateNotFound (constrUpdName, suggestions)
             
       | None -> // consistant and complete -> solution
           let upds =
             List.map activationUpdate acts
+
+          let dependencies = dependencyNames upds
           
           let rec updateTree upd =
             let childs =
@@ -181,7 +187,9 @@ module DependencyResolution =
 
           acts
           |> List.filter (function InitialA _ -> true | _ -> false)
-          |> List.map (updateTree << activationUpdate)
+          |> List.map activationUpdate
+          |> List.filter (fun upd -> List.forall ((<>) upd.Name) dependencies)
+          |> List.map updateTree
           |> Solution
 
       | Some (Primary _ as conf) ->
