@@ -12,37 +12,6 @@ module Program =
 
   module UP = UpdaterProgram
 
-  // [<EntryPoint>]
-  // let main _ =
-
-    // let newUpdate name major minor patch =
-    //   { Name        = UpdateName name
-    //     Version     = {Major=major; Minor=minor; Patch=patch;}
-    //     Constraints = []
-    //   }
-
-    // let ``common_nskPricingCheck``num =
-    //   newUpdate "common_nskPricingCheck" 0u num 0u
-
-    // let target =
-    //   ``common_nskPricingCheck`` 33u
-
-    // [ ``common_nskPricingCheck`` 34u ]
-    // |> Seq.map (fun u -> u.Version) 
-    // |> Seq.filter ((<=) target.Version)
-    // |> Seq.sortDescending
-    // |> Seq.tryHead
-    // |> (fun x -> target.Version > v ->
-    //     UnexpectedVersion (upd, v)
-    
-    // | Some v ->
-    //     AlreadyPublished upd
-    
-    // | None ->
-    //     CorrectVersion upd
-
-    // 0
-  
   [<EntryPoint>]
   let main argv =
 
@@ -129,39 +98,6 @@ module Program =
             ]
     }
     
-    let program1 =
-      UP.authorize >>= (fun user ->
-        UP.choose
-          [ UP.readUpdate >>= (fun upd ->
-              UP.readSpecs >>= (fun specs ->
-                upd
-                |> UP.checkVersion
-                >>= (Set.singleton >> UP.resolveDependencies)
-                >>= (fun _ -> UP.publish (upd, specs) >>= UP.ignore)
-              )
-            )
-            
-            UP.availableUpdates user >>= UP.ignore
-
-            UP.readUserUpdates >>= (fun (updSet, user) ->
-              updSet |> UP.resolveDependencies >>= (
-                Seq.collect Tree.toSeq
-                >> Set.ofSeq
-                >> UP.convertToEsc user
-                >=> (fun _ ->
-                  UP.prepareToInstall user updSet
-                )
-              )
-            )
-
-            UP.readEscUri >>= (fun escUri ->
-              let (Issuer customerId) = user
-              in
-                UP.acceptDownloading customerId escUri
-            )
-          ]
-      )
-
     App.interpretProgram config services program |> ignore
 
     0
