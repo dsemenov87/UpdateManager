@@ -149,7 +149,7 @@ module DataAccess =
       |> Map.ofList
 
     let mutable installed : Map<Update, bool> =
-      [(``mapteka-2.27``, true)]
+      [(``mapteka-2.27``, false)]
       |> Map.ofList
 
     let getUpdUri (baseUri: Uri) upd =
@@ -218,7 +218,7 @@ module DataAccess =
       GetAvailableUpdates = fun customerId ->
         installed
         |> Map.toList
-        |> List.filter snd // non fetched
+        |> List.filter (not << snd) // non fetched
         |> List.map fst
         |> Set.ofList
         |> Async.result

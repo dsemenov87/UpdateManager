@@ -293,15 +293,14 @@ module App =
             >> Seq.toList
             >> (fun lst -> Right (lst, lst |> List.map fst |> ListAvailable |> AvailableMessage))
         )
-
-
-      compressedProtocol
-      |> Option.map (
-        getInstalledUpdatesFromProtocol db
-        >> Async.bind (db.AddUpdatesByUniqueCode userId)
-        >> Async.bind (ignore >> getFromDb)
-      )
-      |> Option.defaultValue (getFromDb ())
+      in
+        compressedProtocol
+        |> Option.map (
+          getInstalledUpdatesFromProtocol db
+          >> Async.bind (db.AddUpdatesByUniqueCode userId)
+          >> Async.bind (ignore >> getFromDb)
+        )
+        |> Option.defaultValue (getFromDb ())
 
     let prepareToInstall (user: CustomerId) (db: UpdRepository) (upds: Update seq) =
       user

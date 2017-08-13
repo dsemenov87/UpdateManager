@@ -80,8 +80,8 @@ module Program =
         let! (updates, target) = UP.readUserUpdates
         let! depsTree = UP.resolveDependencies updates
         let deps = depsTree |> Seq.collect Tree.toSeq |> Seq.distinct
-        do! UP.convertToEsc target deps >>= UP.ignore
         do! UP.prepareToInstall target updates >>= UP.ignore
+        do! UP.convertToEsc target deps >>= UP.ignore
       }
 
       let acceptDownloading = updater {
