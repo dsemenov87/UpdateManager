@@ -7,7 +7,7 @@ rolname=mapteka_get
 
 psql=( psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" )
 
-if "${psql[@]}" --dbname conninfo -tc "SELECT 1 FROM pg_roles WHERE rolname = '${rolname}'" | grep -q 1
+if "${psql[@]}" --dbname ${conninfo} -tc "SELECT 1 FROM pg_roles WHERE rolname = '${rolname}'" | grep -q 1
     then echo "User '${rolname}' already exists.\n"
     else
         echo "Creating user '${rolname}'...\n"
