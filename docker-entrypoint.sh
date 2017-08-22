@@ -14,7 +14,7 @@ if "${psql[@]}" --dbname ${conninfo} -tc "SELECT 1 FROM pg_roles WHERE rolname =
         "${psql[@]}" "CREATE USER ${rolname};"
 fi
 
-if "${psql[@]}" --dbname conninfo -tc "SELECT 1 FROM pg_database WHERE datname = '${dbname}'" | grep -q 1
+if "${psql[@]}" --dbname ${conninfo} -tc "SELECT 1 FROM pg_database WHERE datname = '${dbname}'" | grep -q 1
     then echo "Database '${dbname}' already exists.\n"
     else
         echo "Creating database '${dbname}'...\n"
