@@ -27,7 +27,7 @@ if "${psql[@]}" --dbname "$POSTGRES_DB" -tc "SELECT 1 FROM pg_database WHERE dat
             TABLESPACE = pg_default
             CONNECTION LIMIT = -1;
 EOSQL
-        for f in "ls -v ./scripts/*.sql; do 
+        for f in "ls -v ./scripts/*.sql"; do 
             echo "$0: running $f"
             "${psql[@]}" --dbname ${dbname} -f "$f";
         done
