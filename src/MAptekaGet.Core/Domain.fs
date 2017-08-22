@@ -216,7 +216,7 @@ module Domain =
                   |>> Dependency
 
     let dependencies =
-      sepBy1 dependency rf
+      sepBy dependency rf
    
 
   type ReadUpdateResult =

@@ -4,60 +4,65 @@ module DataAccess =
   open System
   open System.Collections.Generic
   open System.Net.Http
+  open Dist
 
   type UpdRepository =
-    { HeadUpdate            : Update      -> Async<Option<Update * UpdateSpecs>>
+    { HeadUpdate            : Update      -> Async<Choice<Option<Update * UpdateSpecs>, string>>
       GetUpdateUri          : Update      -> Uri -> Async<Option<Uri>>
-      GetAvailableUpdates   : CustomerId  -> Async<Update Set>
-      AddUpdatesByUniqueCode: CustomerId  -> string list -> Async<unit>
+      GetAvailableUpdates   : CustomerId  -> Async<Choice<Update Set, string>>
+      AddUpdatesByUniqueCode: CustomerId  -> string list -> Async<Choice<unit, string>>
       GetVersionsByName     : UpdateName  -> Async<Update Set>
-      GetDependencies       : Update seq  -> Async<Update Set>
-      GetAll                : unit        -> Async<Update Set>
-      Upsert                : Update      -> UpdateSpecs -> IO.FileInfo -> Async<Update>
+      // GetDependencies       : Update seq  -> Async<Update Set>
+      Upsert                : Update      -> UpdateSpecs -> IO.FileInfo -> Async<Choice<unit, string>>
       AddToUsers            : Map<Update, CustomerId>
-                                          -> Async<Map<Update, CustomerId>>
+                                          -> Async<Choice<unit, string>>
+      NearbyNames           : UpdateName  -> Async<Choice<UpdateName seq, string>>
     }
 
   type EscRepository =
-    { Head  : CustomerId -> Async<(EscId * (Update Set * bool)) seq>
+    { Head  : CustomerId -> Async<Choice<(EscId * (Update Set * bool)) seq, string>>
       GetDownloadLink
             : EscId -> Uri -> Uri
-      Put   : CustomerId -> EscId -> Update Set -> bool -> Async<EscId>
-      Create: CustomerId -> Update Set -> IO.Stream -> Async<EscId>
-      Delete: CustomerId -> EscId -> Async<unit>
+      AcceptDownloading 
+            : EscId -> Async<Choice<unit, string>>
+      Create: CustomerId -> Update Set -> IO.Stream -> Async<Choice<EscId, string>>
+      Delete: EscId -> Async<Choice<unit, string>>
     }
 
+  let getEscUri (baseUri: Uri) (eid: EscId) =
+    let ub = UriBuilder baseUri
+    ub.Path <- ub.Path + "esc/" + eid.ToString("N").ToUpper() + ".esc"       
+    ub.Uri
+
+  let getUpdUri (baseUri: Uri) upd =
+    let ub = UriBuilder baseUri
+    ub.Path <- sprintf "upd/%O/%O" upd.Name upd.Version
+    ub.Uri
+
+  /// Use for developing/testing
   let inMemoryEscRepository (internalBaseUri: Uri) =
     
     let mutable escStorage : Map<CustomerId, (EscId * (Update Set * bool)) seq> = Map.empty
-    
-    let getEscUri (baseUri: Uri) (eid: EscId) =
-      let ub = UriBuilder baseUri
-      ub.Path <- ub.Path + "esc/" + eid.ToString("N").ToUpper() + ".esc"       
-      ub.Uri
     
     let headEscByCustomerId cid =
       escStorage
       |> Map.tryFind cid
       |> Option.toList
       |> Seq.collect id
+      |> Choice.create
       |> Async.result
   
-    let putEscByCustomerId (cid: CustomerId) (eid: EscId) (upds: Update Set) (fetched: bool) =
+    let acceptDownloading (eid: EscId) =
       async {
-        let newValue =
-          let entry = [(eid, (upds, fetched))]
-          match Map.tryFind cid escStorage with
-          | None ->
-            seq entry
-          | Some ecss ->
-            ecss
-            |> Seq.filter (fst >> ((<>) eid))
-            |> Seq.append entry
-                  
-        escStorage <- Map.add cid newValue escStorage;
-        
-        return eid
+        escStorage <- 
+          escStorage
+          |> Map.map (fun _ seq' -> seq' |> Seq.map (fun ((eid', (upds,_)) as v) ->
+              if eid = eid'
+                then (eid', (upds, true))
+                else v
+          ));
+
+        return Right ()
       }
 
     let createEscByCustomerId (cid: CustomerId) (upds: Update Set) (stream: IO.Stream) =
@@ -83,33 +88,38 @@ module DataAccess =
         
         escStorage <- Map.add cid newEntry escStorage;
         
-        return md5sum
+        return Right md5sum
       }
 
-    let deleteEscByCustomerId cid eid =
+    let deleteEscByCustomerId eid =
       async {
-        match Map.tryFind cid escStorage with
-        | None -> ()
+        match escStorage
+              |> Map.toSeq
+              |> Seq.collect snd
+              |> Seq.map fst
+              |> Seq.tryFind ((=) eid) with
+        | None -> return Right ()
             
-        | Some ecss ->
-            let newValue =
-              Seq.filter (fst >> ((<>) eid)) ecss
-            
-            use hc = new HttpClient()
+        | Some eid' ->
+            use hc = new Net.Http.HttpClient()
             let! response = hc.DeleteAsync (getEscUri internalBaseUri eid) |> Async.AwaitTask
             response.EnsureSuccessStatusCode |> ignore
             
-            escStorage <- Map.add cid newValue escStorage;
+            escStorage <-
+              escStorage
+              |> Map.map (fun _ seq' -> seq' |> Seq.filter (fst >> ((=) eid)));
+
+            return Right ()
       }
 
     in {  Head = headEscByCustomerId
           GetDownloadLink = flip getEscUri
-          Put = putEscByCustomerId
+          AcceptDownloading = acceptDownloading
           Create = createEscByCustomerId
           Delete = deleteEscByCustomerId
        }
 
-  
+  /// Use for developing/testing
   let inMemoryUpdRepository (internalBaseUri: Uri) = 
     
     let ``mapteka-2.27`` =
@@ -152,11 +162,6 @@ module DataAccess =
       [(``mapteka-2.27``, false)]
       |> Map.ofList
 
-    let getUpdUri (baseUri: Uri) upd =
-      let ub = UriBuilder baseUri
-      ub.Path <- sprintf "upd/%O/%O" upd.Name upd.Version
-      ub.Uri
-
     let getVersionsByName updName =
       lookupSet 
       |> Map.toList
@@ -169,6 +174,7 @@ module DataAccess =
         |> Map.tryFind upd
         // |> Result.ofOption (sprintf "Update '%O' not found." upd)
         |> Option.map (fun specs -> (upd, specs))
+        |> Choice.create
         |> Async.result
       
       GetUpdateUri = fun upd externalHost ->
@@ -180,15 +186,15 @@ module DataAccess =
       GetVersionsByName = fun (updName: UpdateName) ->
         getVersionsByName updName |> Async.result
 
-      GetDependencies = fun (upds: Update seq) ->
-        upds
-        |> Seq.collect (fun upd ->
-            upd.Constraints
-            |> List.map (fun (Dependency (updName,_)) -> updName)
-        )
-        |> Seq.collect getVersionsByName
-        |> Set.ofSeq
-        |> Async.result
+      // GetDependencies = fun (upds: Update seq) ->
+      //   upds
+      //   |> Seq.collect (fun upd ->
+      //       upd.Constraints
+      //       |> List.map (fun (Dependency (updName,_)) -> updName)
+      //   )
+      //   |> Seq.collect getVersionsByName
+      //   |> Set.ofSeq
+      //   |> Async.result
         
       Upsert = fun upd updspecs file ->
         async {
@@ -206,23 +212,23 @@ module DataAccess =
 
           lookupSet <- (Map.add upd updspecs) lookupSet
           
-          return upd
+          return Right ()
         }
 
       AddToUsers = fun dict ->
         for (upd,_) in Map.toSeq dict do
           installed <- Map.add upd false installed;
 
-        async { return dict }
+        Async.result ^ Right ()
 
       GetAvailableUpdates = fun customerId ->
         installed
         |> Map.toList
-        |> List.filter (not << snd) // non fetched
+        |> List.filter (not << snd) // non installed
         |> List.map fst
         |> Set.ofList
+        |> Choice.create
         |> Async.result
-        
 
       AddUpdatesByUniqueCode = fun customerId targetCodes ->
         targetCodes
@@ -236,12 +242,17 @@ module DataAccess =
             if not (Map.containsKey upd installed) then
               installed <- Map.add upd true installed
         )
+        |> Choice.create
         |> Async.result
 
-      GetAll = fun () ->
+      NearbyNames = fun (target: UpdateName) ->
         lookupSet
         |> Map.toList
-        |> List.map fst
-        |> Set.ofList
+        |> List.map (fun (upd,_) -> (target <--> upd.Name, upd.Name))
+        |> List.sortBy fst
+        |> List.map snd
+        |> List.distinct
+        |> Seq.truncate 4
+        |> Choice.create
         |> Async.result
     }

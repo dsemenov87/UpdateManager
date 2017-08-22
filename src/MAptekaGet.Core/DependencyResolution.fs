@@ -1,7 +1,7 @@
 namespace MAptekaGet
 
 module DependencyResolution =
-  open Dist
+  open FSharp.Control
 
   type State = Activation * Activation list
 
@@ -13,15 +13,9 @@ module DependencyResolution =
     //  dependency constraint
     | Secondary of Activation * Activation
 
-  let private candidateTree (initials: NEL<Update>) (allVersions: Update Set) : Tree<State> =
-    let versionsOf updName =
-      allVersions
-      |> Set.filter (fun v -> v.Name = updName)
-      |> Seq.sortBy (fun v -> v.Version)
-      |> Seq.rev // newest is always better
-    
+  let private candidateTree (initials: NEL<Update>) (versionsOf: UpdateName -> Async<Update Set>) : AsyncTree<State> =
     let rec buildTree acts constrActs =
-      seq {
+      asyncSeq {
         match constrActs with
         | [] -> ()
         | (constrAct, constr) :: cs ->
@@ -30,7 +24,10 @@ module DependencyResolution =
                                           |> List.map activationUpdate
                                           |> List.exists (fun upd -> upd.Name = updName)
                                           |> not -> 
-              yield! Seq.map (nodeForVersion acts constrAct constr cs) (versionsOf updName)
+              let! versions = versionsOf updName
+              let versions = versions |> Seq.sort |> Seq.rev  // newest is always better
+              for v in versions do
+                yield nodeForVersion acts constrAct constr cs v
           | _ ->
               yield! buildTree acts cs
       }
@@ -40,21 +37,23 @@ module DependencyResolution =
         ChildA (v, constr, constrAct)
       let nextConstrs =
         (List.allPairs [a'] v.Constraints) @ cs
+      let head = (a', a'::acts)
+      let tail = buildTree (a'::acts) nextConstrs
+      let res = ANode (head, tail)
       in
-        Node ((a', a'::acts), (buildTree (a'::acts) nextConstrs))
+        res
 
     let { Head = head; Tail = tail } =
       NEL.map InitialA initials
     
-    let acts =
-      head :: tail
+    let acts = head :: tail
     
     let initConstraints =
       initials
       |> Seq.collect (fun upd -> upd.Constraints)
       |> Seq.toList
     in
-      Node ((head, acts), (buildTree acts (List.allPairs acts initConstraints)))
+      ANode ((head, acts), (buildTree acts (List.allPairs acts initConstraints)))
 
   let private stateConstraints ((_,acts): State) : (Activation * Constraint) list =
     let zippedDeps a =
@@ -64,14 +63,14 @@ module DependencyResolution =
   
   let rec private pruneTree<'a>
     (predicate: 'a -> bool)
-    (Node (root, descendants): Tree<'a>) : Tree<'a> =
+    (ANode (root, descendants): AsyncTree<'a>) : AsyncTree<'a> =
     
     let nextDescendants =
       if predicate root
-        then Seq.empty
-        else Seq.map (pruneTree predicate) descendants
-    
-    Node (root, nextDescendants)
+        then AsyncSeq.empty
+        else AsyncSeq.map (pruneTree predicate) descendants
+    in
+      ANode (root, nextDescendants)
   
   /// finds previous activation of update
   let private findUpd updName ((_,acts): State) =
@@ -100,27 +99,38 @@ module DependencyResolution =
   let private labelInconsistent (state: State) =
     (state, firstConflict state (List.rev (stateConstraints state)))  
     
-  let private leaves (Node (root, childs): Tree<'a>) : NEL<'a> =
-    let rec calc (tree: Tree<'a>) =
-      match tree with
-      | Node (a, cs) when Seq.isEmpty cs -> seq [a]
-      | Node (_, cs)                     -> Seq.collect calc cs
-    in
-      match childs |> Seq.collect calc |> Seq.toList with
-      | []    -> NEL.create root []
-      | x::xs -> NEL.create x xs
+  let private leaves (ANode (root, childs): AsyncTree<'a>) : Async<NEL<'a>> =
+    async {
+      let rec calc (ANode (a, cs): AsyncTree<'a>) =
+        asyncSeq {
+          let! maybeHead = AsyncSeq.tryFirst cs
+          match maybeHead with
+          | Some head ->
+              yield! AsyncSeq.collect calc (AsyncSeq.cons head cs)
+          | None ->
+              yield a
+        }
+      
+      // do! childs |> AsyncSeq.toListAsync |> Async.map ^ printfn "leaves %A" |> Async.Ignore
+      let! res = childs |> AsyncSeq.collect calc |> AsyncSeq.toListAsync
+      match res with
+      | []    -> return NEL.create root []
+      | x::xs -> return NEL.create x xs
+    }
 
   let private dependencyNames =
     List.collect (fun upd -> upd.Constraints)
     >> List.map (fun (Dependency (updateName, dependencyConstraint)) -> updateName)
   
   /// add the number of updates that are missing for a state to become complete as our distance measure.
-  let private distance ((_,acts): State) =
+  let private distance ((act,acts): State) =
     let updates =
       List.map activationUpdate acts
     in
       updates
+      // |> (fun x -> printfn "List.map1: %A" (List.map updName x);x)
       |> dependencyNames
+      // |> (fun x -> printfn "List.map2: %A" x;x)
       |> List.filter (fun updateName ->
         updates
         |> List.exists (fun upd -> upd.Name = updateName)
@@ -128,19 +138,8 @@ module DependencyResolution =
       )
       |> List.length
   
-  let nearbyNames (target: UpdateName) (allUpdates: Update Set) : UpdateName seq =
-    allUpdates
-    |> Set.map (fun upd -> (target <--> upd.Name, upd.Name))
-    |> Seq.sortBy fst
-    |> Seq.map snd
-    |> Seq.distinct
-    |> Seq.truncate 4
-  
-  let private aggregateToResult
-    (allUpdates: Update Set)
-    (inputList: NEL<(State * Conflict option) * int>) =
-
-    let rec loop primaryConflicts allUpdates inputs =
+  let private aggregateToResult (inputList: NEL<(State * Conflict option) * int>) =
+    let rec loop primaryConflicts inputs =
       match inputs with
       | [] ->
           // printfn "loop: [] -> %A" primaryConflicts;
@@ -160,15 +159,12 @@ module DependencyResolution =
                 activationParent act |> Option.bind (findNotFounded (shift + 1))
             | Some (Dependency (constrUpdName,_)) ->
                 Some constrUpdName
-          
+
           match findNotFounded 0 act with
           | None ->
               failwith "findNotFounded can't be None when levelOfIncompletition > 0."
           | Some constrUpdName ->
-              let suggestions =
-                nearbyNames constrUpdName allUpdates |> Seq.toList
-              in
-                UpdateNotFound (constrUpdName, suggestions)
+              UpdateNotFound (constrUpdName, []) // suggestions will be added in outer procedure - for simplicity
             
       | None -> // consistant and complete -> solution
           let upds =
@@ -196,12 +192,13 @@ module DependencyResolution =
           match primaryConflicts with
           | [] ->
               // printfn "step: Some (Primary _ as conf) -> primaryConflicts: [] -> %A" primaryConflicts;
-              loop [act] allUpdates remains
+              loop [act] remains
           | confAct::cas ->
               // printfn "step: Some (Primary _ as conf) -> primaryConflicts: same: %b" ((activationParent confAct) = (activationParent act));
               if (activationParent confAct) = (activationParent act)
-                then loop (act::confAct::cas) allUpdates remains
+                then loop (act::confAct::cas) remains
                 else MissingUpdateVersion confAct
+      
       | Some (Secondary (act1, act2)) ->
           // printfn "step: Some (Secondary (act1, act2)) -> %O\n%O" (activationUpdate act1) (activationUpdate act2);
           IncompatibleConstraints (act1, act2)
@@ -210,14 +207,11 @@ module DependencyResolution =
     in
       step act acts [] inconsistencyError levelOfIncompletition remains
 
-  let resolve (allUpdates: Update seq) (initials: NEL<Update>) =
-    let lookupSet = Set.ofSeq allUpdates
-    in
-      candidateTree initials lookupSet
-      |> Tree.map labelInconsistent
-      |> pruneTree (Option.isSome << snd)
-      |> leaves
-      |> NEL.map (fun ((s,_) as i) -> (i, distance s))
-      |> NEL.sortBy snd
-      |> aggregateToResult lookupSet
+  let resolve (versionsOf: UpdateName -> Async<Update Set>) (initials: NEL<Update>) =
+    candidateTree initials versionsOf
+    |> AsyncTree.map labelInconsistent
+    |> pruneTree (Option.isSome << snd)
+    |> leaves
+    |> Async.map (NEL.sortBy snd << NEL.map (fun ((s,_) as i) -> (i, distance s)))
+    |> Async.map ^ aggregateToResult
       

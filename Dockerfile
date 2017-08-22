@@ -3,6 +3,9 @@ FROM microsoft/dotnet:2.0-runtime
 WORKDIR /opt/app
 
 COPY src/MAptekaGet.Core/out/ /opt/app
+COPY scripts/ /opt/app/scripts
+
+ENTRYPOINT ["docker-entrypoint.sh"]
 
 EXPOSE 80
 

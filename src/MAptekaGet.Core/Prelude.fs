@@ -18,6 +18,10 @@ module Utils =
     else  
       Choice1Of2 eitherVar
 
+  let validateType<'T> input =
+    try Some(System.Convert.ChangeType(input, typeof<'T>) :?> 'T)
+    with _ -> None
+
   module IO =
     open System
     
@@ -139,6 +143,25 @@ module Utils =
       | None      -> Some Seq.empty
       | Some head -> consOp head (options |> Seq.skip 1 |> sequence)
   
+  open FSharp.Control
+  
+  type AsyncTree<'a> =
+    | ANode of 'a * AsyncSeq<AsyncTree<'a>>
+
+  [<RequireQualifiedAccess>]
+  module AsyncTree =
+    let rec map f (ANode (a, cs)) =
+      ANode (f a, AsyncSeq.map (map f) cs)
+    
+    let singleton x = ANode (x, AsyncSeq.empty)
+
+    let rec toAsyncSeq (ANode (a, cs)) =
+      AsyncSeq.append (AsyncSeq.singleton a) (AsyncSeq.collect toAsyncSeq cs)
+
+  module AsyncSeq =
+    let cons c cs =
+      AsyncSeq.append (AsyncSeq.singleton c) cs 
+  
   [<AutoOpen>]
   module Either =
     let (|Right|Left|) = function Choice1Of2 x -> Right x | Choice2Of2 y -> Left y
@@ -165,7 +188,19 @@ module Utils =
       
       | Right (x::xs) -> Right (NEL.create x xs)
 
-    let mapAsync res = async {
+    let mapAsync f res = async {
+      match res with
+      | Left y -> return Left y
+      | Right x -> let! r = f x in return Right r
+    }
+
+    let bindAsync f res = async {
+      match res with
+      | Left y -> return Left y
+      | Right x -> let! r = f x in return match r with Right r1 -> Right r1 | Left y1 -> Left y1
+    }
+
+    let revAsync res = async {
       match res with
       | Left y -> return Left y
       | Right x -> let! x' = x in return Right x'
@@ -188,6 +223,9 @@ module Utils =
 
       let (>=>) f g x = (f x) >>= g 
   
+  module Map =
+    let merge m1 m2 = Map.fold (fun acc k v -> Map.add k v acc) m1 m2
+
   module Parsing =
     open FParsec
     
@@ -594,3 +632,328 @@ module Utils =
     type Message with
       override x.ToString() =
         x|> pmsgToDoc |> render ^ Some 78
+
+module Sql =
+  open System
+  open System.Data
+  open System.Data.Common
+  open Npgsql
+  module Either = Result
+
+  /// Eq - '=', Gt - '>', Ge - '>=', Lt - '<', Le - '<=' 
+  type Op =
+    | Eq | Gt | Ge | Lt | Le     
+    
+    override x.ToString() = match x with
+                            | Eq -> "="
+                            | Gt -> ">"
+                            | Ge -> ">="
+                            | Lt -> "<"
+                            | Le -> "<="
+  
+  type OrdDir =
+    | Asc | Desc
+
+    override x.ToString() = match x with Asc -> "ASC" | Desc -> "DESC"
+  
+  // type SqlValue =
+  //   | Integer of int32
+  //   | Text of string
+
+  type SqlError =
+    | ColumnNotFound  of string
+    | CastError       of string * string * Type
+    | Unknown         of string
+
+    override this.ToString() =
+      match this with
+      | ColumnNotFound c ->
+          sprintf "Database column '%s' not found." c
+      | CastError (c, t1, t2) ->
+          sprintf "Cast error while reading column '%s': expected '%s' but instead '%O'." c t1 t2
+      | Unknown err ->
+          sprintf "Data access error: '%s'." err
+
+  type RowReader<'v> = DbDataReader -> Either<'v * DbDataReader, SqlError>
+
+  let returnR x r = Right (x, r)
+
+  // type JoinType = InnerJoin | LeftJoin  
+
+  // type Join = string * JoinType * Where option    // table name, join, optional "on" clause 
+  
+  type Select<'v, 't when 't: (static member Name: unit -> string)> = RowReader<'v> * SelectDetails<'t>
+  
+  and SelectDetails<'t> =
+    { Tbl   : 't
+      Proj  : string list
+      Cond  : Map<string, Op * string>
+      OrdBy : Map<string, OrdDir>
+      Offst : int32 option
+      Limit : int32 option
+    }
+
+  let showTxt = sprintf "'%s'"
+
+  let showUuid (uuid: Guid) = uuid.ToString("N") |> sprintf "'%s'"
+
+  let inline showInt x = sprintf "%d" x
+
+  let showBln = sprintf "%b"
+
+  [<RequireQualifiedAccess>]
+  module Insert =
+    let into tblName input =
+      let names = List.map fst input
+      let ins =
+        input
+        |> List.map fst
+        |> String.concat ", "
+        |> sprintf "INSERT INTO %s(%s)" tblName
+
+      let vals =
+        input
+        |> List.map snd
+        |> String.concat ", "
+        |> sprintf "VALUES (%s)"
+      in
+        String.concat "\n" [ins; vals]
+    
+    let inline toParam (show: 'v -> string) (v: 'v) ((_,det): Select<'v, _>) =
+      (List.head det.Proj, show v)
+
+    let inline pTxt x = toParam showTxt x
+    let inline pInt x = toParam showInt x
+    let inline pBln x = toParam showBln x
+
+    let inline pUuid x = toParam showUuid x
+  
+  let itRowAsync (dr: DbDataReader) (rr: RowReader<'v>) =
+    async {
+      try
+        let! read = dr.ReadAsync() |> Async.AwaitTask
+        if read then
+          match rr dr with
+          | Right (row,_) -> return Some ^ Right row
+          | Left err      -> return Some ^ Left err
+        else
+          return None
+      
+      with ex ->
+        return Some ^ Left ^ Unknown (string ex)
+    }
+  
+  let private asTyp (n: string) (o: obj) =
+    match o with
+    | null  -> Left ^ ColumnNotFound n
+    | _     -> Right o
+
+  let private asNullable (n: string) (o: obj) =
+    match o with
+    | :? DBNull -> Left None
+    | _         -> Right o
+
+  let asInt (n: string) (r: DbDataReader) =
+    r.[n] |> asTyp n |> Choice.bind (function
+      | :? Int32 as num ->
+          Right (num, r)
+      | x ->
+          Left ^ CastError ("int", n, x.GetType()))
+
+  let inline private col<'a,'t> (chooseFn: string -> 'a) (name: string) = 
+    ( chooseFn name,
+      {Tbl=Unchecked.defaultof<'t>; Proj = [name]; Cond=Map.empty; OrdBy = Map.empty; Offst=None; Limit=None}
+    )
+    
+  
+  [<RequireQualifiedAccess>]
+  module Select =
+
+    let withOffset offst (r, det) = (r, {det with Offst = Some offst})
+
+    let withLimit limit (r, det) = (r, {det with Limit = Some limit})
+
+    let private showTxtCond ((op: Op), (x: string)) = (op, showTxt x)
+
+    let inline private showIntCond ((op: Op), x) = (op, showInt x)
+
+    let private showBlnCond ((op: Op), (x: bool)) = (op, showBln x)
+    
+    let inline toRawSql ((r, det): Select<'v, 't>) =
+      let inline tblName (_:^t) = (^t: (static member Name: unit -> string) ())
+      
+      let select =
+        if List.isEmpty det.Proj then
+          "SELECT *"
+        else
+          "SELECT " + String.concat ", " det.Proj
+      let from' = "FROM " + (tblName Unchecked.defaultof<'t>)
+      let where = det.Cond |> Map.fold (fun acc k (op, v) -> sprintf "%s AND %s %O %s" acc k op v) "WHERE 1=1"
+      let orderBy =
+        if Map.isEmpty det.OrdBy then
+          ""
+        else
+          "ORDER BY " + String.concat ", " (det.OrdBy |> Map.toList |> List.map (fun (n, od) ->  sprintf "%s %O" n od))
+      let offset =
+        match det.Offst with Some offst -> sprintf "OFFSET %d" offst | _ -> ""
+      let limit =
+        let num =
+          match det.Limit with Some lmt -> lmt | _ -> 512
+        in
+          sprintf "LIMIT %d" num
+      let cmdText =
+        String.concat "\n" [select; from'; where; orderBy; offset; limit]
+      in
+        (r, cmdText)
+
+    let toSeq (conn: NpgsqlConnection) (sqlReader, cmdText) = async {
+      use cmd = conn.CreateCommand()
+      cmd.CommandText <- cmdText
+
+      if conn.State <> ConnectionState.Open then
+        do! conn.OpenAsync () |> Async.AwaitTask
+
+      use! rd = cmd.ExecuteReaderAsync () |> Async.AwaitTask
+   
+      let rec loop (rarr: ResizeArray<_>) = async {
+        let! row = itRowAsync rd sqlReader
+        match row with
+        | Some data ->
+            rarr.Add data;
+            return! loop rarr
+        | None ->
+            return rarr
+      }
+
+      let! res = ResizeArray() |> loop
+      return res :> System.Collections.Generic.IEnumerable<_>
+    }
+
+    let inline where show ((op, cond): Op * 'a) ((rr, det): Select<'a,_>) =
+      (rr, {det with Cond = Map.add (List.head det.Proj) (op, show cond) det.Cond })
+
+    let inline orderBy (ord: OrdDir) ((rr, (det)): Select<_,_>) =
+      (rr, {det with OrdBy = Map.add (List.head det.Proj) ord det.OrdBy })
+
+  let exec (conn: NpgsqlConnection) cmdText = async {
+    use cmd = conn.CreateCommand()
+    cmd.CommandText <- cmdText
+
+    try
+      if conn.State <> ConnectionState.Open then
+        do! conn.OpenAsync () |> Async.AwaitTask
+
+      let! cnt = cmd.ExecuteNonQueryAsync () |> Async.AwaitTask
+      
+      return Right cnt
+    with ex ->
+      return Left (Unknown ^ string ex)
+  }
+
+  let asBool (n: string) (r: DbDataReader) =
+    r.[n] |> asTyp n |> Choice.bind (function
+      | :? bool as b ->
+          Right (b, r)
+      | x ->
+          Left ^ CastError ("bool", n, x.GetType()))
+
+  let asDateTime (n: string) (r: DbDataReader) =
+    r.[n] |> asTyp n |> Choice.bind (function
+      | :? DateTime as dt ->
+          Right (dt, r)
+      | x ->
+          Left ^ CastError ("datetime", n, x.GetType()))
+
+  let asUuid (n: string) (r: DbDataReader) =
+    r.[n] |> asTyp n |> Choice.bind (function
+      | :? Guid as uuid ->
+          Right (uuid, r)
+      | x ->
+          Left ^ CastError ("uuid", n, x.GetType()))
+
+  let asTxt (n: string) (r: DbDataReader) =
+    r.[n] |> asTyp n |> Choice.bind (fun x -> Right (string x, r))
+
+
+  let inline intgr<'t> n  = col<_,'t> asInt n
+  
+  let inline txt<'t> n = col<_,'t> asTxt n
+
+  let inline booln<'t> n = col<_,'t> asBool n
+
+  let inline dtime<'t> n = col<_,'t> asDateTime n
+
+  let inline uuid<'t> n = col<_,'t> asUuid n
+  
+  let private runR (reader,_) = reader
+
+  let bindR (f: 'a -> RowReader<'b>) (a: RowReader<'a>) : RowReader<'b> =
+    let readerFn r =
+      match a r with
+      | Left problem -> Left problem
+      | Right (v, r) -> let b = f v in b r
+    in
+      readerFn
+
+  /// apply a wrapped function to a wrapped value
+  // let applyR fR xR = fR >>= (fun f -> xR >>= (returnR << f))
+
+  // /// infix version of apply
+  // let ( <*> ) = applyR
+
+  // let lift2 f xS yS = returnR f <*> xS <*> yS 
+
+  let mergeDet det1 det2 =
+    let proj3 = det2.Proj @ det1.Proj |> List.distinct
+    let ordBy3 = Map.fold (fun acc k v -> Map.add k v acc) det1.OrdBy det2.OrdBy
+    let cond3 = Map.fold (fun acc k v -> Map.add k v acc) det1.Cond det2.Cond
+    let offst3 =
+      match det1.Offst, det2.Offst with
+      | Some offst1, Some offst2  -> Some (max offst1 offst2)
+      | Some offst1, None         -> Some offst1
+      | None, Some offst2         -> Some offst2
+      | _                         -> None
+    let lmt3 =
+      match det1.Limit, det2.Limit with
+      | Some lmt1, Some lmt2  -> Some (max lmt1 lmt2)
+      | Some lmt1, None       -> Some lmt1
+      | None, Some lmt2       -> Some lmt2
+      | _                     -> None
+    in {Tbl=det1.Tbl; Proj=proj3; Cond=cond3; OrdBy=ordBy3; Offst=offst3; Limit=lmt3}
+
+  let inline andThen ((rr1, stm1): Select<'a, 't>) ((rr2, stm2): Select<'b,'t>) : Select<'a * 'b,'t> =         
+    let readerFn dr =
+      match rr1 dr with
+      | Left err -> Left err
+      | Right (a, dr1) -> match rr2 dr1 with
+                          | Left err        -> Left err
+                          | Right (b, dr2)  -> Right ((a, b), dr2)
+    in
+      (readerFn, mergeDet stm1 stm2)
+
+  let inline andThenIgnoring ((rr1, det1): Select<'a, 't>) ((rr2, det2): Select<'b,'t>) : Select<'a,'t> =     
+    let ordBy3 = Map.fold (fun acc k v -> Map.add k v acc) det1.OrdBy det2.OrdBy
+    let cond3 = Map.fold (fun acc k v -> Map.add k v acc) det1.Cond det2.Cond
+    in
+      (rr1, {det1 with OrdBy = ordBy3; Cond=cond3})
+
+  module Operators =
+  
+    /// Infix version of bindP
+    let ( >>= ) p f = bindR f p
+    
+    /// Lift a value to a Sql
+    // let returnS x = (returnR x, emptyStm)
+
+    let mapR f = bindR (f >> returnR)
+
+    /// infix version of mapS
+    let ( <!> ) = mapR
+
+    let ( |>> ) (r, y) f = (mapR f r, y)
+    
+    /// Infix version of andThen
+    let inline ( .>>. ) x = andThen x
+
+    /// Infix version of andThenIgnoring
+    let inline ( .>> ) x = andThenIgnoring x

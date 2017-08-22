@@ -7,6 +7,7 @@ open Suave.Utils
 
 module Program =
   open DataAccess
+  open DataAccessSql
   open Domain.Operations
   open Parsing
 
@@ -16,13 +17,16 @@ module Program =
   let main argv =
 
     let staticBaseUri =
-      Uri (env "STATIC_BASE_URI"  |> Choice.orDefault "http://localhost/") //"http://test-mapteka-updater.itapteka.loc/"
+      Uri (env "STATIC_BASE_URI"  |> Choice.orDefault "http://test-mapteka-updater.itapteka.loc/")
 
     let escConvertUri =
       Uri (env "ESC_CONVERT_URI"  |> Choice.orDefault "http://localhost:1972/csp/updaptservice/User.UpdAptToEscService.cls")
 
     let escExternalScheme =
       env "ESC_EXT_SCHEME" |> Choice.orDefault "http"
+
+    let dbConnStr =
+      env "DB_CONNECTION_STR" |> Choice.orDefault "server=localhost;port=5432;database=mapteka_get;user id=postgres;password=123"
     
     let defaultConfig : App.Config =
       // default bind to 127.0.0.1:8080
@@ -59,8 +63,8 @@ module Program =
     // resolve dependecies here...
     
     let services : App.Services =
-      { UpdRepository = inMemoryUpdRepository staticBaseUri 
-        EscRepository = inMemoryEscRepository staticBaseUri
+      { UpdRepository = sqlUpdRepository dbConnStr staticBaseUri //inMemoryUpdRepository staticBaseUri 
+        EscRepository = sqlEscRepository dbConnStr staticBaseUri //inMemoryEscRepository staticBaseUri
       }
 
     let program = updater {
@@ -78,9 +82,10 @@ module Program =
 
       let prepareToUnstall = updater {
         let! (updates, target) = UP.readUserUpdates
+        do! UP.prepareToInstall target updates >>= UP.ignore
+        
         let! depsTree = UP.resolveDependencies updates
         let deps = depsTree |> Seq.collect Tree.toSeq |> Seq.distinct
-        do! UP.prepareToInstall target updates >>= UP.ignore
         do! UP.convertToEsc target deps >>= UP.ignore
       }
 
