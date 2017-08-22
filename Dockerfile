@@ -4,7 +4,7 @@ WORKDIR /opt/app
 
 RUN set -ex; \
     apt-get update; \
-    apt-get install -y --no-install-recommends postgresq; \
+    apt-get install -y --no-install-recommends postgresql; \
     rm -rf /var/lib/apt/lists/*;
 
 COPY src/MAptekaGet.Core/out/ /opt/app
