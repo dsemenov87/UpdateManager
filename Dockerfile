@@ -4,7 +4,7 @@ WORKDIR /opt/app
 
 RUN set -ex; \
     apt-get update; \
-    apt-get install -y --no-install-recommends postgresql-client-common; \
+    apt-get install -y --no-install-recommends postgresql-client-common postgresql-client-9.6; \
     rm -rf /var/lib/apt/lists/*;
 
 COPY src/MAptekaGet.Core/out/ /opt/app
