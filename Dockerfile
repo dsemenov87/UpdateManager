@@ -9,6 +9,7 @@ RUN set -ex; \
 
 COPY src/MAptekaGet.Core/out/ /opt/app
 COPY scripts/ /opt/app/scripts
+COPY docker-entrypoint.sh /usr/local/bin/
 
 ENTRYPOINT ["docker-entrypoint.sh"]
 
