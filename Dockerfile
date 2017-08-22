@@ -11,6 +11,9 @@ COPY src/MAptekaGet.Core/out/ /opt/app
 COPY scripts/ /opt/app/scripts
 COPY docker-entrypoint.sh /usr/local/bin/
 
+RUN set -ex; \
+    chmod ug+x /usr/local/bin/docker-entrypoint.sh;
+
 ENTRYPOINT ["docker-entrypoint.sh"]
 
 EXPOSE 80
