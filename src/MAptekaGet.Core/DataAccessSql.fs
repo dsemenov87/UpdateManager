@@ -282,8 +282,7 @@ module DataAccessSql =
 
     let customerId  = txt<EUT> "customer_id"
     let escId       = uuid<EUT> "esc_id"
-    let escUri      = txt<EUT> "esc_uri"
-    let constrs     = txt<EUT> "constraints"
+    let escUri      = txt<EUT> "uri"
     let name        = txt<EUT> "name"
     let major       = intgr<EUT> "major"
     let minor       = intgr<EUT> "minor"
@@ -307,7 +306,8 @@ module DataAccessSql =
 
         stream.Position <- 0L;
 
-        let! response = uploader.PutAsync(getEscUri internalBaseUri md5sum, uploadContent) |> Async.AwaitTask
+        let escUri = getEscUri internalBaseUri md5sum
+        let! response = uploader.PutAsync(escUri, uploadContent) |> Async.AwaitTask
         response.EnsureSuccessStatusCode |> ignore
         
         let! res =
@@ -331,7 +331,8 @@ module DataAccessSql =
                             EUT.name        |> I.pTxt (upd |> updName |> string)
                             EUT.major       |> I.pInt (int upd.Version.Major)
                             EUT.minor       |> I.pInt (int upd.Version.Minor) 
-                            EUT.patch       |> I.pInt (int upd.Version.Patch) 
+                            EUT.patch       |> I.pInt (int upd.Version.Patch)
+                            EUT.escUri      |> I.pTxt (string escUri)
                           ]
                           |> exec connStr
                       )
