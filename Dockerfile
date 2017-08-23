@@ -8,7 +8,7 @@ RUN set -ex; \
     rm -rf /var/lib/apt/lists/*;
 
 COPY src/MAptekaGet.Core/out/ /opt/app
-COPY scripts/ /opt/app/scripts
+COPY initdb.sql /opt/app/
 COPY docker-entrypoint.sh /usr/local/bin/
 
 RUN set -ex; \

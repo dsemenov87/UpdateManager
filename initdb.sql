@@ -1,6 +1,4 @@
 
-CREATE EXTENSION fuzzystrmatch;
-
 -- DROP TABLE update
 CREATE TABLE update (
   name          TEXT NOT NULL,
