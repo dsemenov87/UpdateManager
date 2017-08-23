@@ -43,7 +43,7 @@ CREATE TABLE escape (
 -- DROP TABLE escape_update
 CREATE TABLE escape_update (
   esc_id      UUID REFERENCES escape (esc_id) ON DELETE CASCADE,
-  customer_id UUID NOT NULL,
+  customer_id TEXT NOT NULL,
   name        TEXT NOT NULL,
   major       INT  NOT NULL,
   minor       INT  NOT NULL,
