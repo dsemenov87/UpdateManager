@@ -5,20 +5,20 @@ dbname=mapteka_get
 conninfo=postgres://postgres:5432/"$POSTGRES_DB"
 rolname=mapteka_get
 
-psql=( psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname ${conninfo})
+psql=( psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" )
 
-if "${psql[@]}" -tc "SELECT 1 FROM pg_roles WHERE rolname = '${rolname}'" | grep -q 1
+if "${psql[@]}" --dbname ${conninfo} -tc "SELECT 1 FROM pg_roles WHERE rolname = '${rolname}'" | grep -q 1
     then echo "User '${rolname}' already exists.\n"
     else
         echo "Creating user '${rolname}'...\n"
-        "${psql[@]}" "CREATE USER ${rolname};"
+        "${psql[@]}" --dbname ${conninfo} "CREATE USER ${rolname};"
 fi
 
-if "${psql[@]}" -tc "SELECT 1 FROM pg_database WHERE datname = '${dbname}'" | grep -q 1
+if "${psql[@]}" --dbname ${conninfo} -tc "SELECT 1 FROM pg_database WHERE datname = '${dbname}'" | grep -q 1
     then echo "Database '${dbname}' already exists.\n"
     else
         echo "Creating database '${dbname}'...\n"
-        "${psql[@]}" <<-EOSQL
+        "${psql[@]}" --dbname ${conninfo} <<-EOSQL
         CREATE DATABASE "${dbname}"
             WITH
             OWNER = "${rolname}"
