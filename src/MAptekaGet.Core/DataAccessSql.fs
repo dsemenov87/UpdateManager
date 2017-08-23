@@ -325,31 +325,15 @@ module DataAccessSql =
                     |> Async.bind ^ Choice.bindAsync (fun (_:int) ->
                       upds
                       |> Seq.map (fun upd ->
-                        ET.escId
-                        |> S.where showUuid (Eq, md5sum)
-                        |> S.toRawSql |> S.toSeq connStr
-                        |> Async.bind (
-                          Seq.toList >> Choice.sequence >> Choice.bindAsync (function
-                            | [] ->
-                                Insert.into (EscapeTbl.Name())
-                                  [ ET.escId   |> I.pUuid md5sum
-                                    ET.fetched |> I.pBln false
-                                  ]
-                                  |> exec connStr
-                                  |> Async.bind ^ Choice.bindAsync (fun (_:int) ->
-                                    Insert.into (EscapeUpdateTbl.Name())
-                                      [ EUT.customerId  |> I.pTxt cid
-                                        EUT.escId       |> I.pUuid md5sum
-                                        EUT.name        |> I.pTxt (upd |> updName |> string)
-                                        EUT.major       |> I.pInt (int upd.Version.Major)
-                                        EUT.minor       |> I.pInt (int upd.Version.Minor) 
-                                        EUT.patch       |> I.pInt (int upd.Version.Patch) 
-                                      ]
-                                      |> exec connStr
-                                  )
-                            | _ ->
-                                Async.result ^ Right 0
-                          ))
+                        Insert.into (EscapeUpdateTbl.Name())
+                          [ EUT.customerId  |> I.pTxt cid
+                            EUT.escId       |> I.pUuid md5sum
+                            EUT.name        |> I.pTxt (upd |> updName |> string)
+                            EUT.major       |> I.pInt (int upd.Version.Major)
+                            EUT.minor       |> I.pInt (int upd.Version.Minor) 
+                            EUT.patch       |> I.pInt (int upd.Version.Patch) 
+                          ]
+                          |> exec connStr
                       )
                       |> Async.Parallel
                       |> Async.map (Array.toList >> Choice.sequence >> Choice.map ignore)
