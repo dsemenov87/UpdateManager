@@ -68,7 +68,7 @@ module DataAccessSql =
   module CustomerUpdateCols =
     type CUT = CustomerUpdateTbl
 
-    let custId  = uuid<CUT> "customer_id"
+    let custId  = txt<CUT> "customer_id"
     let name    = txt<CUT> "name"
     let major   = intgr<CUT> "major"
     let minor   = intgr<CUT> "minor"
@@ -221,7 +221,7 @@ module DataAccessSql =
             let (upd: Update, customerId: CustomerId) = List.item i lst
             let! res =  
               Insert.into (CustomerUpdateTbl.Name())
-                [ CUT.custId  |> I.pUuid (Guid customerId)
+                [ CUT.custId  |> I.pTxt customerId
                   UT.name     |> I.pTxt (upd |> updName |> string)
                   UT.major    |> I.pInt (int upd.Version.Major)
                   UT.minor    |> I.pInt (int upd.Version.Minor)
@@ -251,7 +251,7 @@ module DataAccessSql =
 
         let! res =
           CUT.name .>>. CUT.major .>>. CUT.minor .>>. CUT.patch
-          .>> (CUT.custId |> S.where showUuid (Eq, Guid customerId))
+          .>> (CUT.custId |> S.where showTxt (Eq, customerId))
           .>> (CUT.installed |> S.where showBln (Eq, false))
           |>> (fun (((n, ma), mi), p) ->
               (UT.major |> S.where showInt (Eq, ma))

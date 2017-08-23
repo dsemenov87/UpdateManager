@@ -26,7 +26,7 @@ module Program =
       env "ESC_EXT_SCHEME" |> Choice.orDefault "http"
 
     let dbConnStr =
-      env "DB_CONNECTION_STR" |> Choice.orDefault "server=localhost;port=5432;database=mapteka_get;user id=postgres;password=123"
+      env "DB_CONNECTION_STR" |> Choice.orDefault "server=test-mapteka-updater;port=5432;database=mapteka_get;user id=mapteka_get"
     
     let defaultConfig : App.Config =
       // default bind to 127.0.0.1:8080
