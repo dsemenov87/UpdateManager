@@ -24,7 +24,7 @@ INSERT INTO update (name, major, minor, patch, unique_code) VALUES
 
 -- DROP TABLE customer_update
 CREATE TABLE customer_update (
-  customer_id UUID    NOT NULL,
+  customer_id TEXT    NOT NULL,
   name        TEXT    NOT NULL,
   major       INT     NOT NULL,
   minor       INT     NOT NULL,
