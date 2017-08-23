@@ -82,26 +82,19 @@ module DataAccessSql =
 
   let sqlUpdRepository (connStr: string) (internalBaseUri: Uri) =
     let headUpdate (target: Update) =      
-      async {
-        use conn = new NpgsqlConnection(connStr)
-        do! conn.OpenAsync()
-        let! res =
-          (UT.major |> S.where showInt (Eq, int target.Version.Major))
-          .>>. (UT.minor |> S.where showInt (Eq, int target.Version.Minor))
-          .>>. (UT.patch |> S.where showInt (Eq, int target.Version.Patch))
-            |>> UT.decodeVersion 
-          .>>. (UT.name  |> S.where showTxt (Eq, string target.Name))
-          .>>. UT.constrs
-            |>> UT.decodeUpdate
-          .>>. UT.created .>>. UT.author .>>. UT.summary .>>. UT.descr .>>. UT.uqCode
-            |>> UT.decodeUpdSpecs
-          |> S.toRawSql
-          |> S.toSeq conn
-          |> Async.map ^ Seq.map ^ Choice.bind id
-          |> Async.map (Seq.toList >> Choice.sequence >> Choice.map ^ Seq.tryHead >> Choice.mapSnd string)
-
-        return res
-      }
+      (UT.major |> S.where showInt (Eq, int target.Version.Major))
+      .>>. (UT.minor |> S.where showInt (Eq, int target.Version.Minor))
+      .>>. (UT.patch |> S.where showInt (Eq, int target.Version.Patch))
+        |>> UT.decodeVersion 
+      .>>. (UT.name  |> S.where showTxt (Eq, string target.Name))
+      .>>. UT.constrs
+        |>> UT.decodeUpdate
+      .>>. UT.created .>>. UT.author .>>. UT.summary .>>. UT.descr .>>. UT.uqCode
+        |>> UT.decodeUpdSpecs
+      |> S.toRawSql
+      |> S.toSeq connStr
+      |> Async.map ^ Seq.map ^ Choice.bind id
+      |> Async.map (Seq.toList >> Choice.sequence >> Choice.map ^ Seq.tryHead >> Choice.mapSnd string)
 
     let getUpdateUri upd externalHost =
       upd
@@ -111,23 +104,16 @@ module DataAccessSql =
                   >>  Option.map (fst >> DA.getUpdUri externalHost))
 
     let getVersionsByName updName =
-      async {
-        use conn = new NpgsqlConnection(connStr)
-        do! conn.OpenAsync()
-        let! res =
-            UT.major .>>. UT.minor .>>. UT.patch
-              |>> UT.decodeVersion 
-            .>>. (UT.name |> S.where showTxt (Eq, string updName))
-            .>>. UT.constrs
-              |>> UT.decodeUpdate
-          |> S.toRawSql
-          |> S.toSeq conn
-          |> Async.map (Seq.map (Choice.bind id >> Choice.mapSnd string))
-          |> Async.map ^ Seq.collect (function Left err -> failwith err | Right x -> [x]) // todo handle error
-          |> Async.map ^ Set.ofSeq
-        
-        return res
-      }
+      UT.major .>>. UT.minor .>>. UT.patch
+        |>> UT.decodeVersion 
+      .>>. (UT.name |> S.where showTxt (Eq, string updName))
+      .>>. UT.constrs
+        |>> UT.decodeUpdate
+      |> S.toRawSql
+      |> S.toSeq connStr
+      |> Async.map (Seq.map (Choice.bind id >> Choice.mapSnd string))
+      |> Async.map ^ Seq.collect (function Left err -> failwith err | Right x -> [x]) // todo handle error
+      |> Async.map ^ Set.ofSeq
 
     let addUpdatesByUniqueCode (customerId: string) (targetCodes: list<_>) =
       let sqlExecStr =
@@ -156,29 +142,18 @@ module DataAccessSql =
         else
           Async.result ^ Right ()
         
-      async {
-        use conn = new NpgsqlConnection(connStr)
-        do! conn.OpenAsync()
-
-        let! res = loop conn 0
-        return res |> Choice.mapSnd string
-      }
+      in
+        loop connStr 0 |> Async.map ^ Choice.mapSnd string
 
     let nearbyNames target =
-      async {
-        use conn = new NpgsqlConnection(connStr)
-        do! conn.OpenAsync()
-
-        return!
-          txt<NearbyNamesVw> "name"
-          .>> txt<NearbyNamesVw> "of_name"
-            |> S.where showTxt (Eq, string target)
-          .>> (intgr<NearbyNamesVw> "dist" |> S.orderBy Asc)
-          |> S.withLimit 4
-          |> S.toRawSql
-          |> S.toSeq conn
-          |> Async.map (Seq.toList >> Choice.sequence >> Choice.map (Seq.map UpdateName) >> Choice.mapSnd string)
-      }
+      txt<NearbyNamesVw> "name"
+      .>> txt<NearbyNamesVw> "of_name"
+        |> S.where showTxt (Eq, string target)
+      .>> (intgr<NearbyNamesVw> "dist" |> S.orderBy Asc)
+      |> S.withLimit 4
+      |> S.toRawSql
+      |> S.toSeq connStr
+      |> Async.map (Seq.toList >> Choice.sequence >> Choice.map (Seq.map UpdateName) >> Choice.mapSnd string)
 
     let upsert upd (specs: UpdateSpecs) (file: IO.FileInfo) =
       async {
@@ -194,9 +169,6 @@ module DataAccessSql =
 
         response.EnsureSuccessStatusCode() |> ignore
 
-        use conn = new NpgsqlConnection(connStr)
-        do! conn.OpenAsync()
-
         let! res =
           Insert.into (UpdateTbl.Name())
             [ UT.name     |> I.pTxt (upd |> updName |> string)
@@ -208,14 +180,14 @@ module DataAccessSql =
               UT.summary  |> I.pTxt specs.Summary
               UT.descr    |> I.pTxt specs.Description
             ]
-        |> exec conn
+        |> exec connStr
         
         return res |> Choice.mapSnd string |> Choice.map ignore
       }
 
     let addToUsers map' =
       let lst = Map.toList map'
-      let rec loop conn i =
+      let rec loop connStr i =
         if i < lst.Length then
           async {
             let (upd: Update, customerId: CustomerId) = List.item i lst
@@ -227,56 +199,45 @@ module DataAccessSql =
                   UT.minor    |> I.pInt (int upd.Version.Minor)
                   UT.patch    |> I.pInt (int upd.Version.Patch)
                 ]
-              |> exec conn
+              |> exec connStr
 
             match res with
             | Left err -> return Left err
-            | Right res -> return! loop conn (i + 1) 
+            | Right res -> return! loop connStr (i + 1) 
           }
         else
           Async.result ^ Right ()
 
-      async {
-        use conn = new NpgsqlConnection(connStr)
-        do! conn.OpenAsync()
-
-        let! res = loop conn 0
-        return res |> Choice.mapSnd string
-      }
+      in
+        loop connStr 0 |> Async.map ^ Choice.mapSnd string
 
     let getAvailableUpdates (customerId: CustomerId) =
-      async {
-        use conn = new NpgsqlConnection(connStr)
-        do! conn.OpenAsync()
-
-        let! res =
-          CUT.name .>>. CUT.major .>>. CUT.minor .>>. CUT.patch
-          .>> (CUT.custId |> S.where showTxt (Eq, customerId))
-          .>> (CUT.installed |> S.where showBln (Eq, false))
-          |>> (fun (((n, ma), mi), p) ->
-              (UT.major |> S.where showInt (Eq, ma))
-              .>>. (UT.minor |> S.where showInt (Eq, int mi))
-              .>>. (UT.patch |> S.where showInt (Eq, int p))
-                |>> UT.decodeVersion 
-              .>>. (UT.name  |> S.where showTxt (Eq, n))
-              .>>. UT.constrs
-                |>> UT.decodeUpdate
-              .>>. UT.created .>>. UT.author .>>. UT.summary .>>. UT.descr .>>. UT.uqCode
-                |>> UT.decodeUpdSpecs
-              |> S.toRawSql
-              |> S.toSeq conn
-              |> Async.map ^ Seq.map ^ Choice.bind id
-          )
+      CUT.name .>>. CUT.major .>>. CUT.minor .>>. CUT.patch
+      .>> (CUT.custId |> S.where showTxt (Eq, customerId))
+      .>> (CUT.installed |> S.where showBln (Eq, false))
+      |>> (fun (((n, ma), mi), p) ->
+          (UT.major |> S.where showInt (Eq, ma))
+          .>>. (UT.minor |> S.where showInt (Eq, int mi))
+          .>>. (UT.patch |> S.where showInt (Eq, int p))
+            |>> UT.decodeVersion 
+          .>>. (UT.name  |> S.where showTxt (Eq, n))
+          .>>. UT.constrs
+            |>> UT.decodeUpdate
+          .>>. UT.created .>>. UT.author .>>. UT.summary .>>. UT.descr .>>. UT.uqCode
+            |>> UT.decodeUpdSpecs
           |> S.toRawSql
-          |> S.toSeq conn
-          |> Async.map ^ Seq.map ^ Choice.revAsync
-          |> Async.bind ^ Async.Parallel
-          |> Async.map (Seq.toList >> Choice.sequence)
-          |> Async.map ^ Choice.map ^ Seq.collect id 
-          |> Async.map ^ Choice.bind (Seq.toList >> Choice.sequence)
-          
-        return res |> Choice.map (List.map fst >> Set.ofList) |> Choice.mapSnd string
-      }
+          |> S.toSeq connStr
+          |> Async.map ^ Seq.map ^ Choice.bind id
+      )
+      |> S.toRawSql
+      |> S.toSeq connStr
+      |> Async.map ^ Seq.map ^ Choice.revAsync
+      |> Async.bind ^ Async.Parallel
+      |> Async.map (Seq.toList >> Choice.sequence)
+      |> Async.map ^ Choice.map ^ Seq.collect id 
+      |> Async.map ^ Choice.bind (Seq.toList >> Choice.sequence)
+      |> Async.map (Choice.map (List.map fst >> Set.ofList) >> Choice.mapSnd string)
+      
     in
       { HeadUpdate = headUpdate
         GetUpdateUri = getUpdateUri
@@ -322,15 +283,9 @@ module DataAccessSql =
  
   let sqlEscRepository (connStr: string) (internalBaseUri: Uri) : EscRepository =
     let acceptDownloading (eid: EscId) =
-      async {
-        use conn = new NpgsqlConnection(connStr)
-        do! conn.OpenAsync()
-        
-        return!
-          sprintf "UPDATE customer_escape SET fetched = TRUE WHERE esc_id=%s" (showUuid eid)
-          |> exec conn
-          |> Async.map (Choice.map ignore >> Choice.mapSnd string) 
-      }
+      sprintf "UPDATE customer_escape SET fetched = TRUE WHERE esc_id=%s" (showUuid eid)
+      |> exec connStr
+      |> Async.map (Choice.map ignore >> Choice.mapSnd string)
     
     let createEscByCustomerId (cid: CustomerId) (upds: Update Set) (stream: IO.Stream) =
       async {      
@@ -345,9 +300,6 @@ module DataAccessSql =
         let! response = uploader.PutAsync(getEscUri internalBaseUri md5sum, uploadContent) |> Async.AwaitTask
         response.EnsureSuccessStatusCode |> ignore
         
-        use conn = new NpgsqlConnection(connStr)
-        do! conn.OpenAsync()
-        
         let! res =
           upds
           |> Seq.map (fun upd ->
@@ -355,7 +307,7 @@ module DataAccessSql =
               [ ET.escId   |> I.pUuid md5sum
                 ET.fetched |> I.pBln false
               ]
-              |> exec conn
+              |> exec connStr
               |> Async.bind ^ Choice.bindAsync (fun (_:int) ->
                 Insert.into (CustomerEscapeTbl.Name())
                   [ CET.customerId  |> I.pUuid (Guid cid)
@@ -365,7 +317,7 @@ module DataAccessSql =
                     CET.minor       |> I.pInt (int upd.Version.Minor) 
                     CET.patch       |> I.pInt (int upd.Version.Patch) 
                   ]
-                  |> exec conn
+                  |> exec connStr
               )
           )
           |> Async.Parallel
@@ -375,35 +327,29 @@ module DataAccessSql =
       }
 
     let deleteEsc (eid: EscId) =
-      async {
-        use conn = new NpgsqlConnection(connStr)
-        do! conn.OpenAsync()
-        
-        return!
-          sprintf "DELETE FROM escape WHERE esc_id=%s" (showUuid eid)
-          |> exec conn
-          |> Async.bind ^ Choice.mapAsync (fun (count: int) -> 
-              async {
-                if count > 0 then
-                  use hc = new Net.Http.HttpClient()
-                  let! response = hc.DeleteAsync (getEscUri internalBaseUri eid) |> Async.AwaitTask
-                  response.EnsureSuccessStatusCode |> ignore
-                  return ()
-              }
-          )
-          |> Async.map ^ Choice.mapSnd string
-      }
+      sprintf "DELETE FROM escape WHERE esc_id=%s" (showUuid eid)
+      |> exec connStr
+      |> Async.map ^ Choice.mapSnd string
+      |> Async.bind ^ Choice.bindAsync (fun (count: int) -> 
+          async {
+            if count > 0 then
+              use hc = new Net.Http.HttpClient()
+              let! response = hc.DeleteAsync (getEscUri internalBaseUri eid) |> Async.AwaitTask
+              return if response.IsSuccessStatusCode
+                        then Right ()
+                        else Left ^ sprintf "cannot delete '%O'.esc file. HTTP status code: %O." eid response.StatusCode 
+            else
+              return Right ()
+          }
+      )
 
     let headEscByCustomerId (cid: CustomerId) =
       async {
-        use conn = new NpgsqlConnection(connStr)
-        do! conn.OpenAsync()
-
         let! eitherCustomerUpds =
           CET.name .>>. CET.major .>>. CET.minor .>>. CET.patch .>>. CET.escId
           .>> (CET.customerId |> S.where showUuid (Eq, Guid cid))
           |> S.toRawSql
-          |> S.toSeq conn
+          |> S.toSeq connStr
 
         let! eitherCustomerUpds =
           eitherCustomerUpds
@@ -415,7 +361,7 @@ module DataAccessSql =
               .>> (UT.patch |> S.where showInt (Eq, p))
               |>> (fun c -> UT.decodeUpdate ((UT.decodeVersion ((ma, mi), p), n), c))
               |> S.toRawSql
-              |> S.toSeq conn
+              |> S.toSeq connStr
               |> Async.map (
                 Seq.map ^ Choice.bind id
                 >> Seq.toList >> Choice.sequence
@@ -428,7 +374,7 @@ module DataAccessSql =
           |> Array.map ^ Choice.bindAsync (fun (eid, upds) ->
               ET.fetched .>> (ET.escId |> S.where showUuid (Eq, eid))
               |> S.toRawSql
-              |> S.toSeq conn
+              |> S.toSeq connStr
               |> Async.map (
                 Seq.tryHead
                 >> Option.toChoice (Unknown (sprintf "Database inconsistency: Esc '%O' doesn't exist." eid))

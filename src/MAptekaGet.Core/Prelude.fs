@@ -806,12 +806,12 @@ module Sql =
       in
         (r, cmdText)
 
-    let toSeq (conn: NpgsqlConnection) (sqlReader, cmdText) = async {
+    let toSeq (connStr: string) (sqlReader, cmdText) = async {
+      use conn = new NpgsqlConnection(connStr)
       use cmd = conn.CreateCommand()
       cmd.CommandText <- cmdText
 
-      if conn.State <> ConnectionState.Open then
-        do! conn.OpenAsync () |> Async.AwaitTask
+      do! conn.OpenAsync () |> Async.AwaitTask
 
       use! rd = cmd.ExecuteReaderAsync () |> Async.AwaitTask
    
@@ -835,9 +835,12 @@ module Sql =
     let inline orderBy (ord: OrdDir) ((rr, (det)): Select<_,_>) =
       (rr, {det with OrdBy = Map.add (List.head det.Proj) ord det.OrdBy })
 
-  let exec (conn: NpgsqlConnection) cmdText = async {
+  let exec (connStr: string) cmdText = async {
+    use conn = new NpgsqlConnection(connStr)
     use cmd = conn.CreateCommand()
     cmd.CommandText <- cmdText
+
+    do! conn.OpenAsync() |> Async.AwaitTask
 
     try
       if conn.State <> ConnectionState.Open then

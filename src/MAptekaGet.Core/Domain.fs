@@ -432,7 +432,7 @@ module Domain =
       match msg with
       | InvalidUpdate problem ->
           Rep.Message.New
-            ( "Update name format is invalid:"
+            ( "Invalid update:"
             )
             [ txt problem ]
 
