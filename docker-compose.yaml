@@ -25,8 +25,6 @@ services:
             - ESC_CONVERT_URI=http://w7-grishin:1972/csp/updaptservice/User.UpdAptToEscService.cls
             - ESC_EXT_SCHEME=http
             - DB_CONNECTION_STR=server=postgres;port=5432;database=mapteka_get;user id=mapteka_get"
-            - POSTGRES_DB=postgres
-            - POSTGRES_USER=postgres
 
     postgres:
         # restart: always
