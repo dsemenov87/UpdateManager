@@ -249,10 +249,6 @@ module DataAccessSql =
         NearbyNames = nearbyNames
       }
 
-
-
-
-    
   type EscapeTbl() = static member Name () = "escape"
 
   [<RequireQualifiedAccess>]
@@ -270,7 +266,7 @@ module DataAccessSql =
   module CustomerEscapeTbl =
     type CET = CustomerEscapeTbl 
 
-    let customerId  = uuid<CET> "customer_id"
+    let customerId  = txt<CET> "customer_id"
     let escId       = uuid<CET> "esc_id"
     let escUri      = txt<CET> "esc_uri"
     let constrs     = txt<CET> "constraints"
@@ -303,23 +299,32 @@ module DataAccessSql =
         let! res =
           upds
           |> Seq.map (fun upd ->
-            Insert.into (EscapeTbl.Name())
-              [ ET.escId   |> I.pUuid md5sum
-                ET.fetched |> I.pBln false
-              ]
-              |> exec connStr
-              |> Async.bind ^ Choice.bindAsync (fun (_:int) ->
-                Insert.into (CustomerEscapeTbl.Name())
-                  [ CET.customerId  |> I.pUuid (Guid cid)
-                    CET.escId       |> I.pUuid md5sum
-                    CET.name        |> I.pTxt (upd |> updName |> string)
-                    CET.major       |> I.pInt (int upd.Version.Major)
-                    CET.minor       |> I.pInt (int upd.Version.Minor) 
-                    CET.patch       |> I.pInt (int upd.Version.Patch) 
-                  ]
-                  |> exec connStr
-              )
-          )
+            ET.escId
+            |> S.where showUuid (Eq, md5sum)
+            |> S.toRawSql |> S.toSeq connStr
+            |> Async.bind (
+              Seq.toList >> Choice.sequence >> Choice.bindAsync (function
+                | [] ->
+                    Insert.into (EscapeTbl.Name())
+                      [ ET.escId   |> I.pUuid md5sum
+                        ET.fetched |> I.pBln false
+                      ]
+                      |> exec connStr
+                      |> Async.bind ^ Choice.bindAsync (fun (_:int) ->
+                        Insert.into (CustomerEscapeTbl.Name())
+                          [ CET.customerId  |> I.pTxt cid
+                            CET.escId       |> I.pUuid md5sum
+                            CET.name        |> I.pTxt (upd |> updName |> string)
+                            CET.major       |> I.pInt (int upd.Version.Major)
+                            CET.minor       |> I.pInt (int upd.Version.Minor) 
+                            CET.patch       |> I.pInt (int upd.Version.Patch) 
+                          ]
+                          |> exec connStr
+                      )
+                | _ ->
+                    Async.result ^ Right 0
+              ))
+          )  
           |> Async.Parallel
           |> Async.map (Array.toList >> Choice.sequence >> Choice.map ignore >> Choice.mapSnd string)
           
@@ -347,7 +352,7 @@ module DataAccessSql =
       async {
         let! eitherCustomerUpds =
           CET.name .>>. CET.major .>>. CET.minor .>>. CET.patch .>>. CET.escId
-          .>> (CET.customerId |> S.where showUuid (Eq, Guid cid))
+          .>> (CET.customerId |> S.where showTxt (Eq, cid))
           |> S.toRawSql
           |> S.toSeq connStr
 
