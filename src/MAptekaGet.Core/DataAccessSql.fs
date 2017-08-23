@@ -192,9 +192,13 @@ module DataAccessSql =
           async {
             let (upd: Update, customerId: CustomerId) = List.item i lst
             let! res =  
-              CUT.custId
-              |> S.where showTxt (Eq, customerId)
-              |> S.toRawSql |> S.toSeq connStr
+              (CUT.custId     |> S.where showTxt (Eq, customerId))
+              .>> (CUT.name   |> S.where showTxt (Eq, string upd.Name))
+              .>> (CUT.major  |> S.where showInt (Eq, int upd.Version.Major))
+              .>> (CUT.minor  |> S.where showInt (Eq, int upd.Version.Minor))
+              .>> (CUT.patch  |> S.where showInt (Eq, int upd.Version.Patch))
+              |> S.toRawSql
+              |> S.toSeq connStr
               |> Async.bind (
                 Seq.toList >> Choice.sequence >> Choice.bindAsync (function
                   | [] ->
