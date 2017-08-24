@@ -41,7 +41,7 @@ services:
 
   _Warning! 'X-CustomerId' is a temporay auth solution._
 
-* New update
+#### 1. New update
  
 ```
 POST /api/v1/updates/common_nskPricingCheck/0.34.0 HTTP/1.1
@@ -78,7 +78,7 @@ common_nskPricingCheck_0.34
 ------WebKitFormBoundary7MA4YWxkTrZu0gW--
 ```
 
-* Add update(s) to user
+#### 2. Add update(s) to user
 
 ```
 PATCH /api/v1/users/user@user/updates HTTP/1.1
@@ -90,7 +90,7 @@ Cache-Control: no-cache
 upd=common_nskPricingCheck-0.34.0&upd=apt_ImportDocInt_221_nskPricingCheck-0.34.0
 ```
 
-* List of available updates
+#### 3. List of available updates
 
 ```
 GET /api/v1/updates/available HTTP/1.1
@@ -99,7 +99,7 @@ X-CustomerId: user@user
 Cache-Control: no-cache
 ```
 
-* Accept downloading of *.esc file
+#### 4. Accept downloading of *.esc file
 
 ```
 PATCH /api/v1/esc/2537DE9965CDFDC62D13F4C20C3B7C8C.esc HTTP/1.1
