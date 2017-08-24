@@ -42,6 +42,7 @@ services:
   _Warning! 'X-CustomerId' is a temporay auth solution._
 
 * New update
+ 
 ```
 POST /api/v1/updates/common_nskPricingCheck/0.34.0 HTTP/1.1
 Host: test-mapteka-updater.itapteka.loc
