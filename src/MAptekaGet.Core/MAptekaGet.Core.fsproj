@@ -17,7 +17,7 @@
   <ItemGroup>
     <PackageReference Include="FParsec" Version="1.0.3-beta-20170521" />
     <PackageReference Include="FSharp.Core" Version="4.2.1" />
-    <PackageReference Include="FSharp.NET.Sdk" Version="1.0.5" PrivateAssets="All" />
+    <!--PackageReference Include="FSharp.NET.Sdk" Version="*" PrivateAssets="All" /-->
     <PackageReference Include="Npgsql" Version="3.2.5" />
     <PackageReference Include="Suave" Version="2.1.1" />
     <PackageReference Include="System.IO.Compression" Version="4.3.0" />
