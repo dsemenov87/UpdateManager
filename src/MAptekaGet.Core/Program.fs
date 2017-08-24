@@ -11,6 +11,8 @@ module Program =
   open Domain.Operations
   open Parsing
 
+  open Suave.Logging
+
   module UP = UpdaterProgram
 
   [<EntryPoint>]
@@ -27,7 +29,10 @@ module Program =
 
     let dbConnStr =
       env "DB_CONNECTION_STR" |> Choice.orDefault "server=test-mapteka-updater;port=5432;database=mapteka_get;user id=mapteka_get"
-    
+
+    let logLevel =
+      env "LOG_LEVEL" |> Choice.orDefault "DEBUG"
+
     let defaultConfig : App.Config =
       // default bind to 127.0.0.1:8080
       { IP = System.Net.IPAddress.Loopback
@@ -62,9 +67,21 @@ module Program =
 
     // resolve dependecies here...
     
+    let logger =
+      let logLevel =
+        match logLevel with
+        | "DEBUG"   -> LogLevel.Debug
+        | "ERROR"   -> LogLevel.Error
+        | "FATAL"   -> LogLevel.Fatal
+        | "WARN"    -> LogLevel.Warn
+        | _         -> LogLevel.Info
+      in
+        LiterateConsoleTarget([||], logLevel) :> Logger
+    
     let services : App.Services =
-      { UpdRepository = sqlUpdRepository dbConnStr staticBaseUri //inMemoryUpdRepository staticBaseUri 
-        EscRepository = sqlEscRepository dbConnStr staticBaseUri //inMemoryEscRepository staticBaseUri
+      { UpdRepository = sqlUpdRepository dbConnStr staticBaseUri logger //inMemoryUpdRepository staticBaseUri 
+        EscRepository = sqlEscRepository dbConnStr staticBaseUri logger //inMemoryEscRepository staticBaseUri
+        Logger        = logger
       }
 
     let program = updater {

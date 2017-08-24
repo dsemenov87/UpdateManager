@@ -4,6 +4,8 @@ module DataAccessSql =
   open System
   open System.Collections.Concurrent
   open FSharp.Control
+  open Suave.Logging
+  open Suave.Logging.Message
 
   open Domain
   open DataAccess
@@ -80,7 +82,7 @@ module DataAccessSql =
 
   type NearbyNamesVw() = static member Name () = "v_nearby_names"
 
-  let sqlUpdRepository (connStr: string) (internalBaseUri: Uri) =
+  let sqlUpdRepository (connStr: string) (internalBaseUri: Uri) (logger: Logger) =
     let headUpdate (target: Update) =      
       (UT.major |> S.where showInt (Eq, int target.Version.Major))
       .>>. (UT.minor |> S.where showInt (Eq, int target.Version.Minor))
@@ -159,6 +161,11 @@ module DataAccessSql =
       async {
         use hc = new Net.Http.HttpClient()
         use fs = IO.File.OpenRead file.FullName :> IO.Stream
+
+        logger.debug (
+          eventX "Temporary file opened {name}"
+            >> setField "name" file.FullName)
+
         use data =
           new Net.Http.StreamContent(fs)
 
@@ -166,6 +173,11 @@ module DataAccessSql =
           getUpdUri internalBaseUri upd
 
         let! response = hc.PutAsync (uri, data) |> Async.AwaitTask
+
+        logger.debug (
+          eventX "HTTP PUT {uri} responses {statusCode}"
+            >> setField "uri" uri
+            >> setField "statusCode" response.StatusCode)
 
         response.EnsureSuccessStatusCode() |> ignore
 
@@ -290,7 +302,7 @@ module DataAccessSql =
 
   module EUT = EscapeUpdateTbl 
  
-  let sqlEscRepository (connStr: string) (internalBaseUri: Uri) : EscRepository =
+  let sqlEscRepository (connStr: string) (internalBaseUri: Uri) (logger: Logger) : EscRepository =
     let acceptDownloading (eid: EscId) =
       sprintf "UPDATE escape SET fetched = TRUE WHERE esc_id=%s" (showUuid eid)
       |> exec connStr
@@ -308,6 +320,12 @@ module DataAccessSql =
 
         let escUri = getEscUri internalBaseUri md5sum
         let! response = uploader.PutAsync(escUri, uploadContent) |> Async.AwaitTask
+
+        logger.debug (
+          eventX "HTTP PUT {uri} responses {statusCode}"
+            >> setField "uri" escUri
+            >> setField "statusCode" response.StatusCode)
+
         response.EnsureSuccessStatusCode |> ignore
         
         let! res =
@@ -355,7 +373,9 @@ module DataAccessSql =
           async {
             if count > 0 then
               use hc = new Net.Http.HttpClient()
-              let! response = hc.DeleteAsync (getEscUri internalBaseUri eid) |> Async.AwaitTask
+              let escUri = getEscUri internalBaseUri eid
+              let! response = hc.DeleteAsync (escUri) |> Async.AwaitTask
+
               return if response.IsSuccessStatusCode
                         then Right ()
                         else Left ^ sprintf "cannot delete '%O'.esc file. HTTP status code: %O." eid response.StatusCode 

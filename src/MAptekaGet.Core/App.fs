@@ -16,7 +16,9 @@ module App =
   open Suave.Filters
   open Suave.Successful
   open Suave.RequestErrors
-  
+  open Suave.Logging
+  open Suave.Logging.Message
+
   open DataAccess
   
   module DR   = DependencyResolution
@@ -39,11 +41,11 @@ module App =
   type Services =
     { UpdRepository : UpdRepository
       EscRepository : EscRepository
+      Logger        : Logger
     }
 
   type private HttpInterpreterState =
     { Message     : DomainMessage
-      ExternalUri : Uri
     }
 
   /// classify domain message as WebPart
@@ -172,9 +174,15 @@ module App =
       <!> (fun upd -> (upd, Set.singleton upd |> ValidUpdates |> ReadUpdateMessage))
       <?> ReadUpdateMessage
 
-    let checkVersion (db: UpdRepository) (upd: Update) =
+    let checkVersion (db: UpdRepository) (logger: Logger) (upd: Update) =
       async {
         let! upds = db.GetVersionsByName upd.Name
+
+        logger.debug (
+          eventX "Versions of {update}: {versions}"
+            >> setField "update" upd
+            >> setField "versions" upds)
+
         let dmsg = VersionCheckMessage 
         let checkResult = checkUpdateVersion upds upd
         match checkResult with
@@ -185,7 +193,7 @@ module App =
             return Left (dmsg checkResult)
       }
 
-    let resolveDependencies (db: UpdRepository) (updates: Update seq) =
+    let resolveDependencies (db: UpdRepository) (logger: Logger) (updates: Update seq) =
       async {
         let dmsg = ResolutionMessage
         match Seq.toList updates with
@@ -194,6 +202,12 @@ module App =
 
         | u::us ->
           let! res = DR.resolve db.GetVersionsByName (NEL.create u us)
+
+          logger.debug (
+            eventX "Dependencies of {updates}: {deps}"
+              >> setField "updates" (sprintf "%A" updates)
+              >> setField "deps" (sprintf "%A" res))
+
           match res with
           | Solution forest as sol ->
               return Right (forest, dmsg sol)
@@ -351,6 +365,7 @@ module App =
   let internal interpretAsWebPart
     (cfg: Config)
     (srv: Services)
+    (logger: Logger)
     (program: UpdaterProgram<'a>) =
     
     let db = srv.UpdRepository // too often use  
@@ -425,11 +440,11 @@ module App =
 
       | AndThen (CheckVersion (upd, next)) ->
           upd
-          |> checkVersion db
+          |> checkVersion db logger
           |> keepGoingIfSucceedAsync next
 
       | AndThen (ResolveDependencies (upds, next)) ->
-          resolveDependencies db upds
+          resolveDependencies db logger upds
           |> keepGoingIfSucceedAsync next
 
       | AndThen (Publish ((upd, specs), next)) ->
@@ -452,13 +467,10 @@ module App =
             request (fun req ->
               let (Issuer customerId) = user
               let externalUri = req |> externalHost |> sprintf "%s/api/v1/" |> Uri
-              
-              let newState =
-                {state with ExternalUri =  externalUri } 
               in
                 customerId
                 |> availableUpdates db externalUri srv.EscRepository (reqToBody req)
-                |> thenIfSucceedAsync newState next nextWebPart
+                |> keepGoingIfSucceedAsync next
             )
 
           path "/api/v1/updates/available" >=>
@@ -487,21 +499,15 @@ module App =
           |> keepGoingIfSucceedAsync (fun _ -> next)
 
     in // init state
-      nextWebPart {Message=Never; ExternalUri=Uri "http://localhost"} program
+      nextWebPart {Message=Never} program
 
-  open Suave.Logging
-
-  let interpretProgram (config: Config) (srv: Services) program =
-
-    let logger =
-      LiterateConsoleTarget([||], LogLevel.Debug) :> Logger
-    
+  let interpretProgram (config: Config) (srv: Services) program =    
     let webpart =
       choose
         [ POST >=> path "/updates/auth" >=> OK (string Guid.Empty) // stub for test
-          interpretAsWebPart config srv program
+          interpretAsWebPart config srv srv.Logger program
         ] >=>
-          logWithLevelStructured Logging.Debug logger (fun context ->
+          logWithLevelStructured Logging.Debug srv.Logger (fun context ->
             let fields =
               [ "requestMethod"       , box context.request.method
                 "requestPathAndQuery" , box context.request.url.PathAndQuery
@@ -521,7 +527,7 @@ module App =
     let serverConfig =
       { defaultConfig
           with  bindings = [ HttpBinding.create HTTP config.IP config.Port ]
-                logger = logger
+                logger = srv.Logger
       }
 
     startWebServer serverConfig webpart
