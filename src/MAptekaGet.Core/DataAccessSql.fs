@@ -372,7 +372,7 @@ module DataAccessSql =
           |> S.toRawSql
           |> S.toSeq connStr
 
-        let! eitherCustomerUpds =
+        let! eitherUuidUpds =
           eitherCustomerUpds
           |> Seq.map ^ Choice.bindAsync (fun ((((n, ma), mi), p), eid) ->
               UT.constrs
@@ -386,13 +386,16 @@ module DataAccessSql =
               |> Async.map (
                 Seq.map ^ Choice.bind id
                 >> Seq.toList >> Choice.sequence
-                >> Choice.map (fun upds -> (eid, Set.ofList upds)))
+                >> Choice.map (fun upds -> List.allPairs [eid] upds))
           )
           |> Async.Parallel
+          |> Async.map (Seq.toList >> Choice.sequence >> Choice.map
+              (List.collect id >> List.groupBy fst
+                >> List.map (fun (eid, x) -> (eid, x |> List.map snd |> Set.ofList) )))
 
         let! res =
-          eitherCustomerUpds
-          |> Array.map ^ Choice.bindAsync (fun (eid, upds) ->
+          eitherUuidUpds
+          |> Choice.map ^ List.map (fun (eid, upds) ->
               ET.fetched .>> (ET.escId |> S.where showUuid (Eq, eid))
               |> S.toRawSql
               |> S.toSeq connStr
@@ -403,8 +406,10 @@ module DataAccessSql =
                 >> Choice.map (fun fetched -> (eid, (upds, fetched)))
               )
           )
-          |> Async.Parallel
-          |> Async.map (Array.toList >> Choice.sequence >> Choice.map List.toSeq)
+          |> Choice.map ^ Async.Parallel
+          |> Choice.mapAsync id
+          |> Async.map ^ Choice.map (Array.toList >> Choice.sequence >> Choice.map List.toSeq)
+          |> Async.map ^ Choice.bind id
 
         return Choice.mapSnd string res
       }
