@@ -475,8 +475,9 @@ module App =
 
           path "/api/v1/updates/available" >=>
             choose
-              [ GET >=> handle (fun req -> Some req.rawForm)                
-                POST >=> handle (fun _ -> None) 
+              [ GET >=> handle (fun _ -> None)
+                
+                POST >=> handle (fun req -> Some req.rawForm)
               ]
 
       | AndThen (ConvertToEsc (user, upds, next)) ->
