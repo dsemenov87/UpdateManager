@@ -27,8 +27,6 @@ module App =
 
   type NEL<'a> = NonEmptyList<'a>
 
-  Text.Encoding.RegisterProvider(Text.CodePagesEncodingProvider.Instance); // we need win-1251 sometimes...
-
   type Config =
     { IP            : Net.IPAddress
       Port          : Sockets.Port
@@ -93,7 +91,7 @@ module App =
       open System.Xml.Linq
 
       let extractUniqueCodesFromProtocol (input: IO.Stream) =
-
+        Text.Encoding.RegisterProvider(Text.CodePagesEncodingProvider.Instance); // we need win-1251 ...
         let xdoc = XDocument.Load (input)
         in "Item" |> XName.Get |> xdoc.Descendants |> Seq.map (fun el -> el.Value)
 
@@ -392,12 +390,12 @@ module App =
           
       | AndThen (Authorize next) ->
           request (fun req ->
-            match req.header "X-CustomerId" with // temporary unless auth
+            match req.header "X-User" with
             | Choice1Of2 user ->
                 nextWebPart state (next (Issuer user))
 
             | _ ->
-                UNAUTHORIZED "You should set 'X-CustomerId' header." 
+                UNAUTHORIZED "You should set 'X-User' header." 
           )
 
       | AndThen (ReadUserUpdates next) ->
