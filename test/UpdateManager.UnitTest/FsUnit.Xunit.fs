@@ -7,7 +7,7 @@ open Xunit
 open Xunit.Sdk
 open NHamcrest
 open NHamcrest.Core
-open MAptekaGet.Utils.Either
+open Prelude.Either
 
 module CustomMatchers =
   open System.Collections

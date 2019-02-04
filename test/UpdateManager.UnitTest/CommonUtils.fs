@@ -1,9 +1,7 @@
 module CommonUtils
 
-open FParsec
-open MAptekaGet.Utils.Parsing
-open MAptekaGet.Domain.Parsing
-open MAptekaGet.Utils.Either
+open Prelude.Parsing
+open Domain.Parsing
 
 let upd txt =
    match update <-- txt with Right x -> x | _ -> invalidArg "txt" "schould be valid update name."

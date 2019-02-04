@@ -2,10 +2,9 @@ module DomainSpecs
   
 open Xunit
 open FsUnit.Xunit
-open MAptekaGet
-open MAptekaGet.Domain.Parsing
-open MAptekaGet.Utils.Parsing
-open MAptekaGet.Utils.Choice.Infixes
+open Domain.Parsing
+open Prelude.Parsing
+open Prelude.ChoiceInfixes
 
 module VersionSpecs =
   

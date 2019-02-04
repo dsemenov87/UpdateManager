@@ -1,4 +1,4 @@
-FROM microsoft/dotnet:2.0-sdk-jessie
+FROM microsoft/dotnet:2.1-sdk
 
 ENV PG_MAJOR 9.6
 
@@ -18,10 +18,10 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends postgresql-client-common postgresql-client-${PG_MAJOR} \
     && rm -rf /var/lib/apt/lists/*
 
-COPY src/MAptekaGet.Core/MAptekaGet.Core.fsproj /opt/src/
+COPY src/UpdateManager/UpdateManager.fsproj /opt/src/
 RUN cd /opt/src && dotnet restore
 
-COPY src/MAptekaGet.Core /opt/src
+COPY src/UpdateManager /opt/src
 RUN cd /opt/src && dotnet publish -c Release -o /opt/app
 
 COPY initdb.sql /opt/app/
@@ -35,4 +35,4 @@ WORKDIR /opt/app
 
 EXPOSE 80
 
-CMD dotnet MAptekaGet.Core.dll --ip 0.0.0.0 --port 80
+CMD dotnet UpdateManager.dll --ip 0.0.0.0 --port 80

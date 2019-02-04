@@ -4,34 +4,33 @@
 version: '3.0'
 services:
     nginx:
-        restart: always
+        #restart: always
         image: nginx:alpine
         ports:
             - 80:80
         volumes:
-            - /opt/MAptekaGet/ma-updater.conf:/etc/nginx/conf.d/default.conf
+            - /home/semenov/UpdateManager/nginx.conf:/etc/nginx/conf.d/default.conf
             - /www
         depends_on:
             - mapteka-get
         command: /bin/ash -c "chmod 777 /www && nginx -g 'daemon off;'"
     
-    mapteka-get:
-        restart: always
-        image: mapteka-get:0.1.0
+    update-manager:
+        #restart: always
+        build:
+            context: .
         ports:
-            - 8083:80
+            - 8080:80
         depends_on:
             - postgres
         environment:
             - STATIC_BASE_URI=http://nginx/
-            - ESC_CONVERT_URI=http://w7-grishin:1972/csp/updaptservice/User.UpdAptToEscService.cls
-            - ESC_EXT_SCHEME=http
-            - DB_CONNECTION_STR=server=postgres;port=5432;database=mapteka_get;user id=mapteka_get
-            - LOG_LEVEL=DEBUG
+            - DB_CONNECTION_STR=server=postgres;port=5432;database=updater
+            - LOG_LEVEL=Debug
             - POSTGRES_USER=postgres
 
     postgres:
-        restart: always
+        # restart: always
         image: postgres:alpine
         ports:
             - 5432:5432
