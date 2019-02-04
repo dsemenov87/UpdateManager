@@ -1,3 +1,7 @@
+### Description
+
+This utility for managing updates of some client application.
+
 ### Usage:
 
 ```yaml
